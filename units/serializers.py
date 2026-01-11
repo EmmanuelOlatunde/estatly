@@ -236,18 +236,16 @@ class UnitOccupancySerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         is_occupied = attrs.get("is_occupied", getattr(self.instance, "is_occupied", False))
-        name = attrs.get("occupant_name", getattr(self.instance, "occupant_name", None))
-        phone = attrs.get("occupant_phone", getattr(self.instance, "occupant_phone", None))
+        
+        # Only check fields explicitly provided in the request, not instance values
+        name = attrs.get("occupant_name")  # ← Just get from attrs, no fallback
+        phone = attrs.get("occupant_phone")  # ← Just get from attrs, no fallback
 
+        # Only validate if user is explicitly providing occupant info in this request
         if not is_occupied and (name or phone):
             raise serializers.ValidationError(
                 "Cannot provide occupant info when marking unit as unoccupied."
             )
-
-        # if is_occupied and not (name or phone):
-        #     raise serializers.ValidationError(
-        #         "At least one of occupant_name or occupant_phone is required when marking unit as occupied."
-        #     )
 
         return attrs
 

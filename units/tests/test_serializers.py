@@ -20,6 +20,7 @@ from units.serializers import (
 )
 from units.models import Unit
 from .factories import UserFactory, UnitFactory
+from .factories import EstateFactory as estate_factory
 
 
 @pytest.mark.django_db
@@ -95,10 +96,14 @@ class TestUnitCreateSerializer:
     
     def test_valid_data_passes_validation(self):
         """Test that valid data passes validation."""
+        estate = estate_factory() 
+        
+
         data = {
             "identifier": "House 1",
             "unit_type": Unit.UnitType.HOUSE,
             "is_occupied": False,
+            "estate": str(estate.id),
         }
         serializer = UnitCreateSerializer(data=data)
         assert serializer.is_valid()
@@ -124,9 +129,12 @@ class TestUnitCreateSerializer:
     
     def test_identifier_strips_whitespace(self):
         """Test that identifier whitespace is stripped."""
+        estate = estate_factory() 
+        
         data = {
             "identifier": "  House 1  ",
             "unit_type": Unit.UnitType.HOUSE,
+            "estate": str(estate.id),
         }
         serializer = UnitCreateSerializer(data=data)
         assert serializer.is_valid()
@@ -144,11 +152,15 @@ class TestUnitCreateSerializer:
     
     def test_occupant_info_without_occupied_fails(self):
         """Test that occupant info without is_occupied=True fails."""
+        estate = estate_factory() 
+        
+
         data = {
             "identifier": "House 1",
             "unit_type": Unit.UnitType.HOUSE,
             "is_occupied": False,
             "occupant_name": "John Doe",
+            "estate": str(estate.id),
         }
         serializer = UnitCreateSerializer(data=data)
         assert not serializer.is_valid()
@@ -156,22 +168,27 @@ class TestUnitCreateSerializer:
     
     def test_occupied_with_name_valid(self):
         """Test that occupied with occupant name is valid."""
+        estate = estate_factory() 
+        
         data = {
             "identifier": "House 1",
             "unit_type": Unit.UnitType.HOUSE,
             "is_occupied": True,
             "occupant_name": "John Doe",
+            "estate": str(estate.id),
         }
         serializer = UnitCreateSerializer(data=data)
         assert serializer.is_valid()
     
     def test_occupied_with_phone_valid(self):
         """Test that occupied with occupant phone is valid."""
+        estate = estate_factory()
         data = {
             "identifier": "House 1",
             "unit_type": Unit.UnitType.HOUSE,
             "is_occupied": True,
             "occupant_phone": "+1234567890",
+            "estate": str(estate.id),
         }
         serializer = UnitCreateSerializer(data=data)
         assert serializer.is_valid()
@@ -222,15 +239,22 @@ class TestUnitOccupancySerializer:
         assert serializer.is_valid()
     
     def test_mark_as_unoccupied_clears_info(self):
+        """Test that marking as unoccupied clears occupant info."""
         unit = UnitFactory.create(
             is_occupied=True,
             occupant_name="John Doe",
             occupant_phone="+1234567890"
         )
+        
         data = {"is_occupied": False}
         serializer = UnitOccupancySerializer(unit, data=data, partial=True)
-        assert serializer.is_valid()  # ← Now True!
+        
+        print(f"Valid: {serializer.is_valid()}")
+        print(f"Errors: {serializer.errors}")
+        
+        assert serializer.is_valid(), serializer.errors
         serializer.save()
+        
         unit.refresh_from_db()
         assert unit.occupant_name is None
         assert unit.occupant_phone is None
@@ -238,9 +262,13 @@ class TestUnitOccupancySerializer:
     def test_occupant_info_without_occupied_fails(self):
         """Test that occupant info without is_occupied fails."""
         unit = UnitFactory.create(is_occupied=False)
+        estate = estate_factory() 
+        
+
         data = {
             "is_occupied": False,
             "occupant_name": "John Doe",
+            "estate": str(estate.id),
         }
         serializer = UnitOccupancySerializer(unit, data=data, partial=True)
         assert not serializer.is_valid()
