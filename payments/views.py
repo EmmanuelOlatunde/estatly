@@ -24,7 +24,7 @@ from .serializers import (
     ReceiptSerializer,
 )
 from .permissions import (
-    IsEstateManagerOrReadOnly,
+    EstateAccessPermission,
     CanRecordPayment,
     CanViewReceipt,
     IsEstateManager,
@@ -42,7 +42,7 @@ class FeeViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Fee.objects.select_related('estate', 'created_by')
-    permission_classes = [IsAuthenticated, IsEstateManagerOrReadOnly]
+    permission_classes = [IsAuthenticated, IsEstateManager, EstateAccessPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = FeeFilter
     search_fields = ['name', 'description']
@@ -51,22 +51,22 @@ class FeeViewSet(viewsets.ModelViewSet):
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
-        if self.action == 'create':
+        if self.action in ['create', 'update', 'partial_update']:
             return FeeCreateSerializer
         elif self.action == 'retrieve':
             return FeeDetailSerializer
         return FeeSerializer
     
     def get_queryset(self):
-        """Filter fees based on user's estate access."""
+        """Filter fees to only those in the user's estate."""
         queryset = super().get_queryset()
         user = self.request.user
+        user_estate = self._get_user_estate(user)
         
-        if hasattr(user, 'is_estate_manager') and user.is_estate_manager:
-            return queryset
+        if not user_estate:
+            return queryset.none()
         
-        estate_ids = self._get_user_estate_ids(user)
-        return queryset.filter(estate_id__in=estate_ids)
+        return queryset.filter(estate_id=user_estate.id)
     
     def perform_create(self, serializer):
         """Create fee with assignments using service layer."""
@@ -125,13 +125,15 @@ class FeeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
-    def _get_user_estate_ids(self, user):
-        """
-        Get list of estate IDs the user has access to.
+    def _get_user_estate(self, user):
+        """Get the estate a user belongs to."""
+        if hasattr(user, 'estate'):
+            return user.estate
         
-        This is a placeholder - implement based on your estate access model.
-        """
-        return []
+        if hasattr(user, 'profile') and hasattr(user.profile, 'estate'):
+            return user.profile.estate
+        
+        return None
 
 
 class FeeAssignmentViewSet(viewsets.ReadOnlyModelViewSet):
@@ -148,26 +150,32 @@ class FeeAssignmentViewSet(viewsets.ReadOnlyModelViewSet):
         'unit'
     )
     serializer_class = FeeAssignmentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, EstateAccessPermission]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_class = FeeAssignmentFilter
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']
     
     def get_queryset(self):
-        """Filter assignments based on user's access."""
+        """Filter assignments to only those in the user's estate."""
         queryset = super().get_queryset()
         user = self.request.user
+        user_estate = self._get_user_estate(user)
         
-        if hasattr(user, 'is_estate_manager') and user.is_estate_manager:
-            return queryset
+        if not user_estate:
+            return queryset.none()
         
-        estate_ids = self._get_user_estate_ids(user)
-        return queryset.filter(fee__estate_id__in=estate_ids)
+        return queryset.filter(fee__estate_id=user_estate.id)
     
-    def _get_user_estate_ids(self, user):
-        """Get list of estate IDs the user has access to."""
-        return []
+    def _get_user_estate(self, user):
+        """Get the estate a user belongs to."""
+        if hasattr(user, 'estate'):
+            return user.estate
+        
+        if hasattr(user, 'profile') and hasattr(user.profile, 'estate'):
+            return user.profile.estate
+        
+        return None
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -183,7 +191,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         'fee_assignment__unit',
         'recorded_by'
     )
-    permission_classes = [IsAuthenticated, CanRecordPayment]
+    permission_classes = [IsAuthenticated, CanRecordPayment, EstateAccessPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = PaymentFilter
     search_fields = ['reference_number', 'fee_assignment__fee__name']
@@ -198,35 +206,56 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return PaymentSerializer
     
     def get_queryset(self):
-        """Filter payments based on user's access."""
+        """Filter payments to only those in the user's estate."""
         queryset = super().get_queryset()
         user = self.request.user
+        user_estate = self._get_user_estate(user)
         
-        if hasattr(user, 'is_estate_manager') and user.is_estate_manager:
-            return queryset
+        if not user_estate:
+            return queryset.none()
         
-        estate_ids = self._get_user_estate_ids(user)
-        return queryset.filter(fee_assignment__fee__estate_id__in=estate_ids)
+        return queryset.filter(fee_assignment__fee__estate_id=user_estate.id)
     
-    def perform_create(self, serializer):
-        """Record payment using service layer."""
-        validated_data = serializer.validated_data
-        
-        payment = services.mark_fee_as_paid(
-            fee_assignment=validated_data['fee_assignment'],
-            amount=validated_data['amount'],
-            payment_method=validated_data['payment_method'],
-            payment_date=validated_data.get('payment_date'),
-            reference_number=validated_data.get('reference_number', ''),
-            notes=validated_data.get('notes', ''),
-            recorded_by=self.request.user
+    def create(self, request, *args, **kwargs):
+        # Validate input
+        serializer = PaymentCreateSerializer(
+            data=request.data,
+            context=self.get_serializer_context()
         )
+        serializer.is_valid(raise_exception=True)
+
+        # Create payment via service layer
+        payment = services.mark_fee_as_paid(
+            fee_assignment=serializer.validated_data['fee_assignment'],
+            amount=serializer.validated_data['amount'],
+            payment_method=serializer.validated_data['payment_method'],
+            payment_date=serializer.validated_data.get('payment_date'),
+            reference_number=serializer.validated_data.get('reference_number', ''),
+            notes=serializer.validated_data.get('notes', ''),
+            recorded_by=request.user,
+        )
+
+        # 🔥 SERIALIZE RESPONSE WITH FULL SERIALIZER
+        response_serializer = PaymentSerializer(
+            payment,
+            context=self.get_serializer_context()
+        )
+
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+    def _get_user_estate(self, user):
+        """Get the estate a user belongs to."""
+        if hasattr(user, 'estate'):
+            return user.estate
         
-        serializer.instance = payment
-    
-    def _get_user_estate_ids(self, user):
-        """Get list of estate IDs the user has access to."""
-        return []
+        if hasattr(user, 'profile') and hasattr(user.profile, 'estate'):
+            return user.profile.estate
+        
+        return None
 
 
 class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
@@ -239,23 +268,23 @@ class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
     
     queryset = Receipt.objects.select_related('payment', 'payment__fee_assignment')
     serializer_class = ReceiptSerializer
-    permission_classes = [IsAuthenticated, CanViewReceipt]
+    permission_classes = [IsAuthenticated, CanViewReceipt, EstateAccessPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['receipt_number', 'fee_name', 'unit_identifier']
     ordering_fields = ['issued_at', 'payment_date']
     ordering = ['-issued_at']
     
     def get_queryset(self):
-        """Filter receipts based on user's access."""
+        """Filter receipts to only those in the user's estate."""
         queryset = super().get_queryset()
         user = self.request.user
+        user_estate = self._get_user_estate(user)
         
-        if hasattr(user, 'is_estate_manager') and user.is_estate_manager:
-            return queryset
+        if not user_estate:
+            return queryset.none()
         
-        estate_ids = self._get_user_estate_ids(user)
         return queryset.filter(
-            payment__fee_assignment__fee__estate_id__in=estate_ids
+            payment__fee_assignment__fee__estate_id=user_estate.id
         )
     
     @action(detail=True, methods=['get'])
@@ -273,9 +302,12 @@ class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
             'receipt_id': str(receipt.id)
         })
     
-    def _get_user_estate_ids(self, user):
-        """Get list of estate IDs the user has access to."""
-        return []
-
-
-
+    def _get_user_estate(self, user):
+        """Get the estate a user belongs to."""
+        if hasattr(user, 'estate'):
+            return user.estate
+        
+        if hasattr(user, 'profile') and hasattr(user.profile, 'estate'):
+            return user.profile.estate
+        
+        return None

@@ -10,6 +10,7 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.core.validators import EmailValidator
 from django.db import models
 from django.utils import timezone
+from estates.models import Estate
 
 
 class UserManager(BaseUserManager):
@@ -75,8 +76,17 @@ class User(AbstractBaseUser, PermissionsMixin):
         """User role choices."""
         SUPER_ADMIN = 'SUPER_ADMIN', 'Super Admin'
         ESTATE_MANAGER = 'ESTATE_MANAGER', 'Estate Manager'
+        REGULAR = 'REGULAR', 'Regular'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    estate = models.ForeignKey(
+        'estates.Estate',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='managers'
+    )
+
     email = models.EmailField(
         max_length=255,
         unique=True,

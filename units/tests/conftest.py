@@ -122,4 +122,4 @@ def inactive_unit(user):
 
 @pytest.fixture
 def user_estate(authenticated_user):
-    return EstateFactory.create(manager=authenticated_user)  # Assume EstateFactory exists
+    return EstateFactory.create(manager=authenticated_user)  

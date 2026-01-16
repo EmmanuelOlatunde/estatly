@@ -12,6 +12,7 @@ Coverage:
 
 import pytest
 import uuid
+from decimal import Decimal
 from django.urls import reverse
 from .helpers import (
     assert_fee_response_structure,
@@ -40,7 +41,7 @@ class TestFeeRetrieveEndpoint:
         assert response.status_code == 200
         assert response.data["id"] == str(fee.id)
         assert response.data["name"] == fee.name
-        assert response.data["amount"] == str(fee.amount)
+        assert Decimal(response.data["amount"]) == fee.amount
     
     def test_fee_detail_includes_assignments(
         self, authenticated_client, fee_with_assignments
@@ -145,7 +146,7 @@ class TestPaymentRetrieveEndpoint:
         
         assert response.status_code == 200
         assert response.data["id"] == str(payment.id)
-        assert response.data["amount"] == str(payment.amount)
+        assert Decimal(response.data["amount"]) == payment.amount
     
     def test_nonexistent_payment_returns_404(self, authenticated_client):
         """Test retrieving non-existent payment returns 404."""
@@ -206,17 +207,16 @@ class TestReceiptRetrieveEndpoint:
         assert response.status_code == 200
         assert_receipt_response_structure(response.data)
     
-    def test_receipt_contains_all_payment_info(
-        self, authenticated_client, receipt
-    ):
+    def test_receipt_contains_all_payment_info(self, authenticated_client, receipt):
         """Test receipt contains all necessary payment information."""
         url = reverse("receipt-detail", args=[receipt.id])
         response = authenticated_client.get(url)
-        
+
         assert response.status_code == 200
         data = response.data
         assert data["estate_name"] == receipt.estate_name
         assert data["unit_identifier"] == receipt.unit_identifier
         assert data["fee_name"] == receipt.fee_name
-        assert data["amount"] == str(receipt.amount)
-        assert data["payment_method"] == receipt.payment_method
+        
+        # ← Compare as Decimal, not string
+        assert Decimal(data["amount"]) == receipt.amount

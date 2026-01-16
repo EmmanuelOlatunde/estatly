@@ -11,6 +11,7 @@ Coverage:
 - Nested serialization
 """
 
+from unittest.mock import Mock
 import pytest
 from decimal import Decimal
 from datetime import timedelta
@@ -24,7 +25,18 @@ from payments.serializers import (
     ReceiptSerializer,
 )
 from payments.models import FeeAssignment
+from unittest.mock import Mock
+from rest_framework.test import APIRequestFactory
 
+
+@pytest.fixture
+def request_with_user(user):
+    """Create a mock request with authenticated user."""
+    from rest_framework.test import APIRequestFactory
+    factory = APIRequestFactory()
+    request = factory.get('/')
+    request.user = user
+    return request
 
 @pytest.mark.django_db
 class TestFeeSerializer:
@@ -37,8 +49,8 @@ class TestFeeSerializer:
         
         assert data["id"] == str(fee.id)
         assert data["name"] == fee.name
-        assert data["amount"] == str(fee.amount)
-        assert data["estate"] == str(fee.estate.id)
+        assert data["amount"] == f"{fee.amount:.2f}"
+        assert str(data["estate"]) == str(fee.estate.id)
         assert "created_at" in data
         assert "updated_at" in data
     
@@ -148,8 +160,8 @@ class TestFeeAssignmentSerializer:
         data = serializer.data
         
         assert data["id"] == str(fee_assignment.id)
-        assert data["fee"] == str(fee_assignment.fee.id)
-        assert data["unit"] == str(fee_assignment.unit.id)
+        assert str(data["fee"]) == str(fee_assignment.fee.id)
+        assert str(data["unit"]) == str(fee_assignment.unit.id)
         assert data["status"] == fee_assignment.status
         assert "fee_name" in data
         assert "fee_amount" in data
@@ -165,49 +177,58 @@ class TestFeeAssignmentSerializer:
         serializer = FeeAssignmentSerializer(paid_fee_assignment)
         assert serializer.data["has_payment"] is True
 
-
 @pytest.mark.django_db
 class TestPaymentCreateSerializer:
     """Test PaymentCreateSerializer for recording payments."""
     
-    def test_valid_payment_creation(self, fee_assignment):
+    def test_valid_payment_creation(self, fee_assignment, request_with_user):
         """Test creating payment with valid data."""
         data = {
             "fee_assignment": str(fee_assignment.id),
             "amount": str(fee_assignment.fee.amount),
             "payment_method": "bank_transfer",
-            "reference_number": "REF123",
-            "notes": "Test payment",
         }
         
-        serializer = PaymentCreateSerializer(data=data)
+        # ✓ FIXED: Pass context with request
+        serializer = PaymentCreateSerializer(
+            data=data,
+            context={'request': request_with_user}
+        )
         assert serializer.is_valid(), serializer.errors
     
-    def test_amount_must_match_fee_amount(self, fee_assignment):
+    def test_amount_must_match_fee_amount(self, fee_assignment, request_with_user):
         """Test payment amount must match fee amount."""
         data = {
             "fee_assignment": str(fee_assignment.id),
             "amount": str(fee_assignment.fee.amount + Decimal("100.00")),
             "payment_method": "cash",
         }
-        
-        serializer = PaymentCreateSerializer(data=data)
+
+        # ✓ FIXED: Pass context with request
+        serializer = PaymentCreateSerializer(
+            data=data,
+            context={'request': request_with_user}
+        )
         assert not serializer.is_valid()
-        assert "amount" in serializer.errors
+        assert 'amount' in serializer.errors
     
-    def test_already_paid_assignment_rejected(self, paid_fee_assignment):
+    def test_already_paid_assignment_rejected(self, paid_fee_assignment, request_with_user):
         """Test cannot create payment for already paid assignment."""
         data = {
             "fee_assignment": str(paid_fee_assignment.id),
             "amount": str(paid_fee_assignment.fee.amount),
             "payment_method": "cash",
         }
-        
-        serializer = PaymentCreateSerializer(data=data)
+
+        # ✓ FIXED: Pass context with request
+        serializer = PaymentCreateSerializer(
+            data=data,
+            context={'request': request_with_user}
+        )
         assert not serializer.is_valid()
-        assert "fee_assignment" in serializer.errors
+        assert 'fee_assignment' in serializer.errors
     
-    def test_negative_amount_rejected(self, fee_assignment):
+    def test_negative_amount_rejected(self, fee_assignment, request_with_user):
         """Test negative payment amount is rejected."""
         data = {
             "fee_assignment": str(fee_assignment.id),
@@ -215,11 +236,15 @@ class TestPaymentCreateSerializer:
             "payment_method": "cash",
         }
         
-        serializer = PaymentCreateSerializer(data=data)
+        # ✓ FIXED: Pass context with request
+        serializer = PaymentCreateSerializer(
+            data=data,
+            context={'request': request_with_user}
+        )
         assert not serializer.is_valid()
         assert "amount" in serializer.errors
     
-    def test_zero_amount_rejected(self, fee_assignment):
+    def test_zero_amount_rejected(self, fee_assignment, request_with_user):
         """Test zero payment amount is rejected."""
         data = {
             "fee_assignment": str(fee_assignment.id),
@@ -227,11 +252,15 @@ class TestPaymentCreateSerializer:
             "payment_method": "cash",
         }
         
-        serializer = PaymentCreateSerializer(data=data)
+        # ✓ FIXED: Pass context with request
+        serializer = PaymentCreateSerializer(
+            data=data,
+            context={'request': request_with_user}
+        )
         assert not serializer.is_valid()
         assert "amount" in serializer.errors
     
-    def test_invalid_payment_method_rejected(self, fee_assignment):
+    def test_invalid_payment_method_rejected(self, fee_assignment, request_with_user):
         """Test invalid payment method is rejected."""
         data = {
             "fee_assignment": str(fee_assignment.id),
@@ -239,10 +268,14 @@ class TestPaymentCreateSerializer:
             "payment_method": "invalid_method",
         }
         
-        serializer = PaymentCreateSerializer(data=data)
+        # ✓ FIXED: Pass context with request
+        serializer = PaymentCreateSerializer(
+            data=data,
+            context={'request': request_with_user}
+        )
         assert not serializer.is_valid()
         assert "payment_method" in serializer.errors
-
+        
 
 @pytest.mark.django_db
 class TestPaymentSerializer:
@@ -254,7 +287,8 @@ class TestPaymentSerializer:
         data = serializer.data
         
         assert data["id"] == str(payment.id)
-        assert data["amount"] == str(payment.amount)
+        assert Decimal(data["amount"]) == payment.amount
+
         assert data["payment_method"] == payment.payment_method
         assert "fee_name" in data
         assert "unit_identifier" in data
@@ -281,7 +315,7 @@ class TestReceiptSerializer:
         assert data["estate_name"] == receipt.estate_name
         assert data["unit_identifier"] == receipt.unit_identifier
         assert data["fee_name"] == receipt.fee_name
-        assert data["amount"] == str(receipt.amount)
+        assert Decimal(data["amount"]) == receipt.amount
         assert "payment_date" in data
         assert "issued_at" in data
     

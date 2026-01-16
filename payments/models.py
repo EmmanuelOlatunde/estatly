@@ -210,58 +210,31 @@ class Payment(models.Model):
 
 
 class Receipt(models.Model):
-    """
-    Auto-generated receipt for a payment.
-    
-    Contains all necessary information for a formal payment receipt.
-    """
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    receipt_number = models.CharField(
-        max_length=50,
-        unique=True,
-        help_text="Unique receipt number (auto-generated)"
-    )
-    payment = models.OneToOneField(
-        Payment,
-        on_delete=models.PROTECT,
-        related_name='receipt',
-        help_text="The payment this receipt is for"
-    )
-    estate_name = models.CharField(
-        max_length=255,
-        help_text="Estate name (cached for receipt)"
-    )
-    unit_identifier = models.CharField(
-        max_length=100,
-        help_text="Unit identifier (cached for receipt)"
-    )
-    fee_name = models.CharField(
-        max_length=255,
-        help_text="Fee name (cached for receipt)"
-    )
-    amount = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        help_text="Amount paid (cached for receipt)"
-    )
-    payment_date = models.DateTimeField(
-        help_text="Payment date (cached for receipt)"
-    )
-    payment_method = models.CharField(
-        max_length=20,
-        help_text="Payment method (cached for receipt)"
-    )
+    payment = models.OneToOneField(Payment, on_delete=models.CASCADE, related_name='receipt')
+    receipt_number = models.CharField(max_length=50, unique=True)
+    estate_name = models.CharField(max_length=255)
+    unit_identifier = models.CharField(max_length=255)
+    fee_name = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_date = models.DateField()
+    payment_method = models.CharField(max_length=50)
     issued_at = models.DateTimeField(auto_now_add=True)
     
-    class Meta:
-        ordering = ['-issued_at']
-        verbose_name = 'Receipt'
-        verbose_name_plural = 'Receipts'
-        indexes = [
-            models.Index(fields=['receipt_number']),
-            models.Index(fields=['-issued_at']),
-        ]
+    def save(self, *args, **kwargs):
+        """Auto-generate receipt number if not set."""
+        if not self.receipt_number:
+            # Format: RCP-YYYYMMDD-XXXXX (where X is sequential)
+            today = timezone.now().date()
+            date_str = today.strftime('%Y%m%d')
+            
+            # Count existing receipts for today
+            today_count = Receipt.objects.filter(
+                receipt_number__startswith=f'RCP-{date_str}'
+            ).count() + 1
+            
+            self.receipt_number = f'RCP-{date_str}-{today_count:05d}'
+        
+        super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"Receipt {self.receipt_number}"
+        return f'Receipt {self.receipt_number}'

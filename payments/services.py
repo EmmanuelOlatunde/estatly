@@ -14,7 +14,7 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError
 
 from .models import Fee, FeeAssignment, Payment, Receipt
 
@@ -160,54 +160,46 @@ def mark_fee_as_paid(
 ) -> Payment:
     """
     Mark a fee assignment as paid by creating a payment record.
-    
-    Args:
-        fee_assignment: The FeeAssignment to mark as paid
-        amount: Payment amount (must match fee amount)
-        payment_method: Payment method ('bank_transfer' or 'cash')
-        recorded_by: User recording the payment
-        payment_date: When payment was made (defaults to now)
-        reference_number: Optional payment reference
-        notes: Optional payment notes
-    
-    Returns:
-        The created Payment instance
-    
-    Raises:
-        ValidationError: If fee is already paid or amount doesn't match
     """
     if fee_assignment.status == FeeAssignment.PaymentStatus.PAID:
         raise ValidationError("This fee has already been marked as paid")
     
-    if hasattr(fee_assignment, 'payment'):
+    try:
+        existing_payment = fee_assignment.payment
         raise ValidationError("A payment record already exists for this fee")
+    except Payment.DoesNotExist:
+        pass
     
     if amount != fee_assignment.fee.amount:
         raise ValidationError(
             f"Payment amount ({amount}) must match fee amount ({fee_assignment.fee.amount})"
         )
     
-    if payment_date is None:
-        payment_date = timezone.now()
+    # Rest of implementation...
+    payment = Payment.objects.create(
+        fee_assignment=fee_assignment,
+        amount=amount,
+        payment_method=payment_method,
+        payment_date=payment_date or timezone.now(),
+        reference_number=reference_number,
+        notes=notes,
+        recorded_by=recorded_by
+    )
     
-    with transaction.atomic():
-        payment = Payment.objects.create(
-            fee_assignment=fee_assignment,
-            amount=amount,
-            payment_method=payment_method,
-            payment_date=payment_date,
-            reference_number=reference_number,
-            notes=notes,
-            recorded_by=recorded_by
-        )
-        
-        payment.full_clean()
-        payment.save()
-        
-        fee_assignment.status = FeeAssignment.PaymentStatus.PAID
-        fee_assignment.save(update_fields=['status', 'updated_at'])
-        
-        generate_receipt_for_payment(payment=payment)
+    fee_assignment.status = FeeAssignment.PaymentStatus.PAID
+    fee_assignment.save()
+    
+    # Let the model auto-generate receipt_number
+    Receipt.objects.create(
+        payment=payment,
+        # receipt_number will be auto-generated in save()
+        estate_name=fee_assignment.fee.estate.name,
+        unit_identifier=fee_assignment.unit.identifier,
+        fee_name=fee_assignment.fee.name,
+        amount=payment.amount,
+        payment_date=payment.payment_date.date(),
+        payment_method=payment.payment_method
+    )
     
     return payment
 
@@ -225,6 +217,8 @@ def generate_receipt_for_payment(*, payment: Payment) -> Receipt:
     Raises:
         ValidationError: If receipt already exists for this payment
     """
+    # Use hasattr to safely check if the OneToOneField relation exists
+    # This is cleaner than exception handling for control flow
     if hasattr(payment, 'receipt'):
         raise ValidationError("Receipt already exists for this payment")
     
@@ -237,13 +231,13 @@ def generate_receipt_for_payment(*, payment: Payment) -> Receipt:
         unit_identifier=payment.fee_assignment.unit.identifier,
         fee_name=payment.fee_assignment.fee.name,
         amount=payment.amount,
-        payment_date=payment.payment_date,
+        payment_date=payment.payment_date.date(),  
         payment_method=payment.get_payment_method_display()
     )
     
     return receipt
-
-
+    
+    
 def _generate_receipt_number() -> str:
     """
     Generate a unique receipt number.
@@ -325,7 +319,7 @@ def get_unit_payment_history(*, unit_id: uuid.UUID) -> List[dict]:
             'receipt': None,
         }
         
-        if hasattr(assignment, 'payment'):
+        try:
             payment = assignment.payment
             record['payment'] = {
                 'id': payment.id,
@@ -334,11 +328,17 @@ def get_unit_payment_history(*, unit_id: uuid.UUID) -> List[dict]:
                 'reference_number': payment.reference_number,
             }
             
-            if hasattr(payment, 'receipt'):
+            try:
+                receipt = payment.receipt
                 record['receipt'] = {
-                    'id': payment.receipt.id,
-                    'receipt_number': payment.receipt.receipt_number,
+                    'id': receipt.id,
+                    'receipt_number': receipt.receipt_number,
                 }
+            except Receipt.DoesNotExist:
+                pass
+                
+        except Payment.DoesNotExist:
+            pass
         
         history.append(record)
     

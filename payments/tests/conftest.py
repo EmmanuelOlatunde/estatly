@@ -1,16 +1,11 @@
-# tests/conftest.py
-
-"""
-Global fixtures for payments app tests.
-
-Provides authenticated clients, users, and common test data.
-"""
-
 import pytest
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
+from accounts.models import User  # Add this import
 from .factories import (
     UserFactory,
+    EstateManagerFactory,
+    SuperAdminFactory,
     EstateFactory,
     UnitFactory,
     FeeFactory,
@@ -26,10 +21,14 @@ def api_client():
     return APIClient()
 
 
+# tests/conftest.py
 @pytest.fixture
-def user(db):
-    """Standard authenticated user (estate manager)."""
-    return UserFactory.create(is_estate_manager=True)
+def user(db, estate):
+    user = UserFactory.create(
+        email='manager@test.estate',
+        estate=estate  # ← FIX: Assign estate to user
+    )
+    return user
 
 
 @pytest.fixture
@@ -43,7 +42,7 @@ def authenticated_client(user):
 @pytest.fixture
 def other_user(db):
     """Another user for cross-user access tests."""
-    return UserFactory.create(is_estate_manager=True)
+    return EstateManagerFactory.create()  
 
 
 @pytest.fixture
@@ -57,7 +56,10 @@ def other_user_client(other_user):
 @pytest.fixture
 def regular_user(db):
     """Regular user without estate manager permissions."""
-    return UserFactory.create(is_estate_manager=False)
+    return UserFactory.create(
+        role=User.Role.REGULAR,  # Even if "regular", needs a valid role
+        is_staff=False
+    )
 
 
 @pytest.fixture
@@ -71,7 +73,7 @@ def regular_user_client(regular_user):
 @pytest.fixture
 def admin_user(db):
     """Admin/superuser for permission tests."""
-    return UserFactory.create(is_staff=True, is_superuser=True)
+    return SuperAdminFactory.create()  # Use the specialized factory
 
 
 @pytest.fixture
@@ -98,15 +100,15 @@ def jwt_client(jwt_token):
 
 
 @pytest.fixture
-def estate(db, user):
+def estate(db):
     """Create a test estate owned by user."""
-    return EstateFactory.create(created_by=user)
+    return EstateFactory.create() 
 
 
 @pytest.fixture
-def other_estate(db, other_user):
+def other_estate(db):
     """Create an estate for other_user."""
-    return EstateFactory.create(created_by=other_user)
+    return EstateFactory.create()  
 
 
 @pytest.fixture

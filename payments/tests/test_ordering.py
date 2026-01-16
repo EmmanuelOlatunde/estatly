@@ -26,16 +26,38 @@ class TestFeeOrdering:
         self, authenticated_client, estate, user
     ):
         """Test fees are ordered by created_at descending by default."""
-        fee1 = FeeFactory.create(estate=estate, created_by=user, name="First")
-        fee2 = FeeFactory.create(estate=estate, created_by=user, name="Second")
-        fee3 = FeeFactory.create(estate=estate, created_by=user, name="Third")
+        from datetime import timedelta
+        import time
+        # Create with explicit timestamps to guarantee ordering
+        base_time = timezone.now()
         
+        fee1 = FeeFactory.create(
+            estate=estate,
+            created_by=user,
+            name="First",
+            created_at=base_time - timedelta(hours=2)
+        )
+        time.sleep(0.1)
+        fee2 = FeeFactory.create(
+            estate=estate,
+            created_by=user,
+            name="Second",
+            created_at=base_time - timedelta(hours=1)
+        )
+        time.sleep(0.2)
+        fee3 = FeeFactory.create(
+            estate=estate,
+            created_by=user,
+            name="Third",
+            created_at=base_time
+        )
+
         url = reverse("fee-list")
         response = authenticated_client.get(url)
-        
+
         assert response.status_code == 200
         results = response.data["results"]
-        assert results[0]["id"] == str(fee3.id)
+        assert results[0]["id"] == str(fee3.id)  # Most recent first
         assert results[1]["id"] == str(fee2.id)
         assert results[2]["id"] == str(fee1.id)
     

@@ -1,358 +1,516 @@
 # tests/test_integration.py
 
 """
-Tests for multi-endpoint workflows and integration scenarios.
+Integration tests for payments app.
+
+Tests multi-endpoint workflows and end-to-end scenarios.
 
 Coverage:
-- Complete ticket lifecycle
-- Multi-step workflows
+- Complete payment workflows
+- Multi-step operations
 - Cross-endpoint interactions
-- Real-world usage patterns
+- Real-world user scenarios
 """
 
 import pytest
+from decimal import Decimal
+from datetime import timedelta
 from django.urls import reverse
-from maintenance.models import MaintenanceTicket
+from django.utils import timezone
+from payments.models import Fee, FeeAssignment, Payment, Receipt
 
 
 @pytest.mark.django_db
-class TestCompleteTicketLifecycle:
-    """Test complete ticket lifecycle from creation to resolution."""
+class TestCompletePaymentWorkflow:
+    """Test complete fee creation to receipt generation workflow."""
     
-    def test_create_update_resolve_workflow(
-        self, authenticated_client, estate
+    def test_full_payment_lifecycle(
+        self, authenticated_client, estate, units, user
     ):
-        """Test creating, updating, and resolving a ticket."""
-        # Step 1: Create ticket
-        create_data = {
-            'title': 'Water leak in basement',
-            'description': 'There is water leaking from the ceiling',
-            'category': 'WATER',
-            'estate': str(estate.id)
+        """
+        Test complete workflow:
+        1. Create fee
+        2. Verify assignments created
+        3. Record payment
+        4. Verify receipt generated
+        5. Verify assignment status updated
+        """
+        # Step 1: Create fee assigned to all units
+        fee_url = reverse("fee-list")
+        fee_data = {
+            "name": "Monthly Maintenance Fee",
+            "description": "Regular maintenance charge",
+            "amount": "5000.00",
+            "due_date": (timezone.now() + timedelta(days=30)).date().isoformat(),
+            "estate": str(estate.id),
+            "assign_to_all_units": True,
         }
         
-        create_url = reverse('maintenance:maintenance-ticket-list')
-        create_response = authenticated_client.post(create_url, create_data, format='json')
-        assert create_response.status_code == 201
-        ticket_id = create_response.data['id']
+        fee_response = authenticated_client.post(fee_url, fee_data, format="json")
+        assert fee_response.status_code == 201
+        fee_id = fee_response.data["id"]
         
-        # Step 2: Update ticket with more details
-        update_data = {
-            'description': 'Water leaking from ceiling in basement near boiler room'
+        # Step 2: Verify fee assignments were created for all units
+        fee = Fee.objects.get(id=fee_id)
+        assert fee.fee_assignments.count() == len(units)
+        assert fee.fee_assignments.filter(status='unpaid').count() == len(units)
+        
+        # Step 3: Get first assignment and record payment
+        assignment = fee.fee_assignments.first()
+        payment_url = reverse("payment-list")
+        payment_data = {
+            "fee_assignment": str(assignment.id),
+            "amount": "5000.00",
+            "payment_method": "bank_transfer",
+            "reference_number": "TXN123456",
+            "notes": "Payment via online banking",
         }
         
-        update_url = reverse('maintenance:maintenance-ticket-detail', args=[ticket_id])
-        update_response = authenticated_client.patch(update_url, update_data, format='json')
-        assert update_response.status_code == 200
-        assert 'boiler room' in update_response.data['description']
-        
-        # Step 3: Resolve the ticket
-        resolve_url = reverse('maintenance:maintenance-ticket-resolve', args=[ticket_id])
-        resolve_response = authenticated_client.post(resolve_url)
-        assert resolve_response.status_code == 200
-        assert resolve_response.data['status'] == 'RESOLVED'
-        
-        # Step 4: Verify final state
-        detail_url = reverse('maintenance:maintenance-ticket-detail', args=[ticket_id])
-        detail_response = authenticated_client.get(detail_url)
-        assert detail_response.status_code == 200
-        assert detail_response.data['status'] == 'RESOLVED'
-        assert detail_response.data['resolved_at'] is not None
-    
-    def test_create_resolve_reopen_workflow(
-        self, authenticated_client, estate
-    ):
-        """Test creating, resolving, and reopening a ticket."""
-        # Create ticket
-        create_data = {
-            'title': 'Elevator not working',
-            'description': 'Main elevator is stuck',
-            'category': 'OTHER',
-            'estate': str(estate.id)
-        }
-        
-        create_url = reverse('maintenance:maintenance-ticket-list')
-        create_response = authenticated_client.post(create_url, create_data, format='json')
-        ticket_id = create_response.data['id']
-        
-        # Resolve ticket
-        resolve_url = reverse('maintenance:maintenance-ticket-resolve', args=[ticket_id])
-        authenticated_client.post(resolve_url)
-        
-        # Reopen ticket (issue came back)
-        reopen_url = reverse('maintenance:maintenance-ticket-reopen', args=[ticket_id])
-        reopen_response = authenticated_client.post(reopen_url)
-        assert reopen_response.status_code == 200
-        assert reopen_response.data['status'] == 'OPEN'
-        assert reopen_response.data['resolved_at'] is None
-    
-    def test_create_update_delete_workflow(
-        self, authenticated_client, estate
-    ):
-        """Test creating, updating, and deleting a ticket."""
-        # Create ticket
-        create_data = {
-            'title': 'Test issue',
-            'description': 'Test description',
-            'category': 'OTHER',
-            'estate': str(estate.id)
-        }
-        
-        create_url = reverse('maintenance:maintenance-ticket-list')
-        create_response = authenticated_client.post(create_url, create_data, format='json')
-        ticket_id = create_response.data['id']
-        
-        # Update ticket
-        update_url = reverse('maintenance:maintenance-ticket-detail', args=[ticket_id])
-        authenticated_client.patch(
-            update_url,
-            {'title': 'Updated title'},
-            format='json'
+        payment_response = authenticated_client.post(
+            payment_url, payment_data, format="json"
         )
+        assert payment_response.status_code == 201
+        payment_id = payment_response.data["id"]
         
-        # Delete ticket
-        delete_response = authenticated_client.delete(update_url)
-        assert delete_response.status_code == 204
+        # Step 4: Verify receipt was auto-generated
+        payment = Payment.objects.get(id=payment_id)
+        assert hasattr(payment, 'receipt')
+        receipt = payment.receipt
+        assert receipt.receipt_number.startswith("RCP-")
+        assert receipt.amount == Decimal("5000.00")
+        assert receipt.estate_name == estate.name
         
-        # Verify deletion
-        get_response = authenticated_client.get(update_url)
-        assert get_response.status_code == 404
-
-
-@pytest.mark.django_db
-class TestMultiTicketWorkflows:
-    """Test workflows involving multiple tickets."""
+        # Step 5: Verify assignment status was updated to paid
+        assignment.refresh_from_db()
+        assert assignment.status == 'paid'
+        
+        # Step 6: Verify fee payment summary
+        summary_url = reverse("fee-payment-summary", args=[fee_id])
+        summary_response = authenticated_client.get(summary_url)
+        assert summary_response.status_code == 200
+        assert summary_response.data["total_assigned_units"] == len(units)
+        assert summary_response.data["total_paid"] == 1
+        assert summary_response.data["total_unpaid"] == len(units) - 1
     
-    def test_create_multiple_tickets_and_list(
-        self, authenticated_client, estate
+    def test_multiple_payments_workflow(
+        self, authenticated_client, fee_with_assignments, user
     ):
-        """Test creating multiple tickets and listing them."""
-        # Create 5 tickets
-        create_url = reverse('maintenance:maintenance-ticket-list')
+        """Test paying multiple fee assignments sequentially."""
+        fee = fee_with_assignments
+        assignments = list(fee.fee_assignments.all()[:3])
         
-        for i in range(5):
-            data = {
-                'title': f'Issue {i+1}',
-                'description': f'Description for issue {i+1}',
-                'category': ['WATER', 'ELECTRICITY', 'SECURITY', 'WASTE', 'OTHER'][i],
-                'estate': str(estate.id)
+        payment_url = reverse("payment-list")
+        payment_ids = []
+        
+        # Record payments for 3 assignments
+        for i, assignment in enumerate(assignments):
+            payment_data = {
+                "fee_assignment": str(assignment.id),
+                "amount": str(assignment.fee.amount),
+                "payment_method": "cash" if i % 2 == 0 else "bank_transfer",
+                "reference_number": f"REF-{i+1}",
             }
-            response = authenticated_client.post(create_url, data, format='json')
+            
+            response = authenticated_client.post(
+                payment_url, payment_data, format="json"
+            )
+            assert response.status_code == 201
+            payment_ids.append(response.data["id"])
+        
+        # Verify all payments were created
+        assert Payment.objects.filter(id__in=payment_ids).count() == 3
+        
+        # Verify all receipts were generated
+        receipts = Receipt.objects.filter(payment_id__in=payment_ids)
+        assert receipts.count() == 3
+        
+        # Verify all receipt numbers are unique
+        receipt_numbers = list(receipts.values_list('receipt_number', flat=True))
+        assert len(set(receipt_numbers)) == 3
+        
+        # Verify fee payment summary
+        fee.refresh_from_db()
+        assert fee.fee_assignments.filter(status='paid').count() == 3
+        assert fee.fee_assignments.filter(status='unpaid').count() == 2
+    
+    def test_create_fee_assign_additional_units_then_pay(
+        self, authenticated_client, estate, units, user
+    ):
+        """
+        Test workflow:
+        1. Create fee for 2 units
+        2. Assign to 2 more units
+        3. Pay all 4 assignments
+        """
+        # Step 1: Create fee for first 2 units
+        fee_url = reverse("fee-list")
+        initial_unit_ids = [str(unit.id) for unit in units[:2]]
+        fee_data = {
+            "name": "Special Assessment",
+            "amount": "10000.00",
+            "due_date": (timezone.now() + timedelta(days=60)).date().isoformat(),
+            "estate": str(estate.id),
+            "unit_ids": initial_unit_ids,
+        }
+        
+        response = authenticated_client.post(fee_url, fee_data, format="json")
+        assert response.status_code == 201
+        fee_id = response.data["id"]
+        
+        fee = Fee.objects.get(id=fee_id)
+        assert fee.fee_assignments.count() == 2
+        
+        # Step 2: Assign to 2 more units
+        assign_url = reverse("fee-assign-to-units", args=[fee_id])
+        additional_unit_ids = [str(unit.id) for unit in units[2:4]]
+        assign_data = {"unit_ids": additional_unit_ids}
+        
+        response = authenticated_client.post(assign_url, assign_data, format="json")
+        assert response.status_code == 201
+        
+        fee.refresh_from_db()
+        assert fee.fee_assignments.count() == 4
+        
+        # Step 3: Pay all 4 assignments
+        payment_url = reverse("payment-list")
+        for assignment in fee.fee_assignments.all():
+            payment_data = {
+                "fee_assignment": str(assignment.id),
+                "amount": str(fee.amount),
+                "payment_method": "bank_transfer",
+            }
+            response = authenticated_client.post(
+                payment_url, payment_data, format="json"
+            )
             assert response.status_code == 201
         
-        # List all tickets
-        list_response = authenticated_client.get(create_url)
-        assert list_response.status_code == 200
-        assert list_response.data['count'] == 5
+        # Verify all are paid
+        fee.refresh_from_db()
+        assert fee.fee_assignments.filter(status='paid').count() == 4
+        assert fee.fee_assignments.filter(status='unpaid').count() == 0
+
+
+@pytest.mark.django_db
+class TestMultiEstateScenarios:
+    """Test scenarios involving multiple estates."""
     
-    def test_filter_and_order_multiple_tickets(
-        self, authenticated_client, authenticated_user, estate
+    def test_fees_isolated_by_estate(
+        self, authenticated_client, estate, other_estate, units, other_units, user
     ):
-        """Test filtering and ordering multiple tickets."""
-        from .factories import MaintenanceTicketFactory
+        """Test that fees are properly isolated by estate."""
+        # Create fee for estate 1
+        fee_url = reverse("fee-list")
+        fee1_data = {
+            "name": "Estate 1 Fee",
+            "amount": "3000.00",
+            "due_date": (timezone.now() + timedelta(days=30)).date().isoformat(),
+            "estate": str(estate.id),
+            "assign_to_all_units": True,
+        }
         
-        # Create tickets with different statuses and categories
-        MaintenanceTicketFactory.create_batch(
-            3, created_by=authenticated_user, estate=estate,
-            category='WATER', status='OPEN'
+        response1 = authenticated_client.post(fee_url, fee1_data, format="json")
+        assert response1.status_code == 201
+        fee1_id = response1.data["id"]
+        
+        # Create fee for estate 2
+        fee2_data = {
+            "name": "Estate 2 Fee",
+            "amount": "4000.00",
+            "due_date": (timezone.now() + timedelta(days=30)).date().isoformat(),
+            "estate": str(other_estate.id),
+            "assign_to_all_units": True,
+        }
+        
+        response2 = authenticated_client.post(fee_url, fee2_data, format="json")
+        assert response2.status_code == 201
+        fee2_id = response2.data["id"]
+        
+        # Verify assignments are isolated
+        fee1 = Fee.objects.get(id=fee1_id)
+        fee2 = Fee.objects.get(id=fee2_id)
+        
+        assert fee1.fee_assignments.count() == len(units)
+        assert fee2.fee_assignments.count() == len(other_units)
+        
+        # Verify no cross-estate assignments
+        fee1_unit_ids = set(
+            fee1.fee_assignments.values_list('unit_id', flat=True)
         )
-        MaintenanceTicketFactory.create_batch(
-            2, created_by=authenticated_user, estate=estate,
-            category='WATER', status='RESOLVED', resolved_at='2024-01-01'
-        )
-        MaintenanceTicketFactory.create_batch(
-            2, created_by=authenticated_user, estate=estate,
-            category='ELECTRICITY', status='OPEN'
+        fee2_unit_ids = set(
+            fee2.fee_assignments.values_list('unit_id', flat=True)
         )
         
-        list_url = reverse('maintenance:maintenance-ticket-list')
-        
-        # Filter by category
-        category_response = authenticated_client.get(
-            list_url,
-            {'category': 'WATER'}
-        )
-        assert category_response.status_code == 200
-        assert category_response.data['count'] == 5
-        
-        # Filter by status
-        status_response = authenticated_client.get(
-            list_url,
-            {'status': 'OPEN'}
-        )
-        assert status_response.status_code == 200
-        assert status_response.data['count'] == 5
-        
-        # Combined filter
-        combined_response = authenticated_client.get(
-            list_url,
-            {'category': 'WATER', 'status': 'OPEN'}
-        )
-        assert combined_response.status_code == 200
-        assert combined_response.data['count'] == 3
+        assert len(fee1_unit_ids.intersection(fee2_unit_ids)) == 0
+
+
+@pytest.mark.django_db
+class TestReceiptWorkflows:
+    """Test receipt-related workflows."""
     
-    def test_batch_resolve_workflow(
-        self, authenticated_client, authenticated_user, estate
+    def test_receipt_generation_and_retrieval(
+        self, authenticated_client, fee_assignment, user
     ):
-        """Test resolving multiple tickets."""
-        from .factories import MaintenanceTicketFactory
+        """Test receipt is generated and can be retrieved."""
+        # Record payment
+        payment_url = reverse("payment-list")
+        payment_data = {
+            "fee_assignment": str(fee_assignment.id),
+            "amount": str(fee_assignment.fee.amount),
+            "payment_method": "cash",
+        }
         
-        # Create 3 tickets
-        tickets = MaintenanceTicketFactory.create_batch(
-            3, created_by=authenticated_user, estate=estate, status='OPEN'
+        payment_response = authenticated_client.post(
+            payment_url, payment_data, format="json"
         )
+        assert payment_response.status_code == 201
         
-        # Resolve all tickets
-        for ticket in tickets:
-            resolve_url = reverse('maintenance:maintenance-ticket-resolve', args=[ticket.id])
-            response = authenticated_client.post(resolve_url)
-            assert response.status_code == 200
+        # Get receipt via payment
+        payment = Payment.objects.get(id=payment_response.data["id"])
+        receipt = payment.receipt
         
-        # Verify all are resolved
-        list_url = reverse('maintenance:maintenance-ticket-list')
-        response = authenticated_client.get(list_url, {'status': 'RESOLVED'})
+        # Retrieve receipt via API
+        receipt_detail_url = reverse("receipt-detail", args=[receipt.id])
+        receipt_response = authenticated_client.get(receipt_detail_url)
+        
+        assert receipt_response.status_code == 200
+        assert receipt_response.data["receipt_number"] == receipt.receipt_number
+        assert receipt_response.data["amount"] == str(receipt.amount)
+        
+        # Test receipt download endpoint
+        download_url = reverse("receipt-download", args=[receipt.id])
+        download_response = authenticated_client.get(download_url)
+        
+        assert download_response.status_code == 200
+        assert "receipt_number" in download_response.data
+    
+    def test_list_all_receipts_for_estate(
+        self, authenticated_client, fee_with_assignments, user
+    ):
+        """Test listing all receipts for an estate."""
+        fee = fee_with_assignments
+        payment_url = reverse("payment-list")
+        
+        # Create payments for all assignments
+        for assignment in fee.fee_assignments.all():
+            payment_data = {
+                "fee_assignment": str(assignment.id),
+                "amount": str(assignment.fee.amount),
+                "payment_method": "bank_transfer",
+            }
+            authenticated_client.post(payment_url, payment_data, format="json")
+        
+        # List all receipts
+        receipt_list_url = reverse("receipt-list")
+        response = authenticated_client.get(receipt_list_url)
+        
         assert response.status_code == 200
-        assert response.data['count'] == 3
+        assert response.data["count"] == 5
+        
+        # Verify all receipts have unique numbers
+        receipt_numbers = [r["receipt_number"] for r in response.data["results"]]
+        assert len(set(receipt_numbers)) == 5
 
 
 @pytest.mark.django_db
-class TestSearchAndStatistics:
-    """Test search and statistics integration."""
+class TestErrorRecoveryScenarios:
+    """Test error handling and recovery scenarios."""
     
-    def test_search_then_get_statistics(
-        self, authenticated_client, authenticated_user, estate
+    def test_cannot_pay_same_assignment_twice(
+        self, authenticated_client, fee_assignment, user
     ):
-        """Test searching tickets then getting statistics."""
-        from .factories import MaintenanceTicketFactory
+        """Test that attempting to pay twice is rejected."""
+        payment_url = reverse("payment-list")
+        payment_data = {
+            "fee_assignment": str(fee_assignment.id),
+            "amount": str(fee_assignment.fee.amount),
+            "payment_method": "cash",
+        }
         
-        # Create tickets
-        MaintenanceTicketFactory.create(
-            title='Water leak urgent',
-            created_by=authenticated_user,
-            estate=estate,
-            category='WATER'
+        # First payment succeeds
+        response1 = authenticated_client.post(
+            payment_url, payment_data, format="json"
         )
-        MaintenanceTicketFactory.create(
-            title='Water pressure issue',
-            created_by=authenticated_user,
-            estate=estate,
-            category='WATER'
-        )
-        MaintenanceTicketFactory.create(
-            title='Electrical problem',
-            created_by=authenticated_user,
-            estate=estate,
-            category='ELECTRICITY'
-        )
+        assert response1.status_code == 201
         
-        # Search for water issues
-        list_url = reverse('maintenance:maintenance-ticket-list')
-        search_response = authenticated_client.get(list_url, {'search': 'water'})
-        assert search_response.status_code == 200
-        assert search_response.data['count'] == 2
-        
-        # Get statistics
-        stats_url = reverse('maintenance:maintenance-ticket-statistics')
-        stats_response = authenticated_client.get(
-            stats_url,
-            {'estate_id': str(estate.id)}
+        # Second payment fails
+        response2 = authenticated_client.post(
+            payment_url, payment_data, format="json"
         )
-        assert stats_response.status_code == 200
-        assert stats_response.data['total_tickets'] == 3
-        assert stats_response.data['by_category']['Water'] == 2
+        assert response2.status_code == 400
+        assert "fee_assignment" in response2.data
+    
+    def test_update_fee_after_some_payments(
+        self, authenticated_client, fee_with_assignments, user
+    ):
+        """Test updating fee after some payments have been made."""
+        fee = fee_with_assignments
+        
+        # Pay first assignment
+        assignment = fee.fee_assignments.first()
+        payment_url = reverse("payment-list")
+        payment_data = {
+            "fee_assignment": str(assignment.id),
+            "amount": str(assignment.fee.amount),
+            "payment_method": "cash",
+        }
+        authenticated_client.post(payment_url, payment_data, format="json")
+        
+        # Update fee details (should not affect paid assignments)
+        fee_url = reverse("fee-detail", args=[fee.id])
+        update_data = {
+            "name": "Updated Fee Name",
+            "description": "Updated description",
+        }
+        
+        response = authenticated_client.patch(fee_url, update_data, format="json")
+        assert response.status_code == 200
+        
+        # Verify payment and receipt are unchanged
+        payment = Payment.objects.get(fee_assignment=assignment)
+        receipt = payment.receipt
+        
+        # Receipt should have old fee name (cached)
+        assert receipt.fee_name == fee.name  # Old name before update
 
 
 @pytest.mark.django_db
-class TestCrossUserScenarios:
-    """Test scenarios involving multiple users."""
+class TestBulkOperations:
+    """Test bulk operation scenarios."""
     
-    def test_staff_can_manage_all_tickets(
-        self, admin_client, authenticated_user, other_user, estate
+    def test_create_fee_for_large_estate(
+        self, authenticated_client, estate, user
     ):
-        """Test staff user can manage tickets from all users."""
-        from .factories import MaintenanceTicketFactory
+        """Test creating fee for estate with many units."""
+        from .factories import UnitFactory
         
-        # Create tickets by different users
-        user1_ticket = MaintenanceTicketFactory.create(
-            created_by=authenticated_user, estate=estate
-        )
-        user2_ticket = MaintenanceTicketFactory.create(
-            created_by=other_user, estate=estate
-        )
+        # Create 50 units
+        units = [UnitFactory.create(estate=estate) for _ in range(50)]
         
-        # Staff can list all
-        list_url = reverse('maintenance:maintenance-ticket-list')
-        list_response = admin_client.get(list_url)
-        assert list_response.status_code == 200
-        assert list_response.data['count'] >= 2
+        # Create fee assigned to all units
+        fee_url = reverse("fee-list")
+        fee_data = {
+            "name": "Bulk Fee",
+            "amount": "1000.00",
+            "due_date": (timezone.now() + timedelta(days=30)).date().isoformat(),
+            "estate": str(estate.id),
+            "assign_to_all_units": True,
+        }
         
-        # Staff can update user1's ticket
-        update_url = reverse('maintenance:maintenance-ticket-detail', args=[user1_ticket.id])
-        update_response = admin_client.patch(
-            update_url,
-            {'title': 'Admin updated'},
-            format='json'
-        )
-        assert update_response.status_code == 200
+        response = authenticated_client.post(fee_url, fee_data, format="json")
+        assert response.status_code == 201
         
-        # Staff can resolve user2's ticket
-        resolve_url = reverse('maintenance:maintenance-ticket-resolve', args=[user2_ticket.id])
-        resolve_response = admin_client.post(resolve_url)
-        assert resolve_response.status_code == 200
+        fee = Fee.objects.get(id=response.data["id"])
+        assert fee.fee_assignments.count() == 50
+    
+    def test_pay_multiple_fees_for_single_unit(
+        self, authenticated_client, estate, units, user
+    ):
+        """Test paying multiple different fees for same unit."""
+        from .factories import FeeFactory, FeeAssignmentFactory
+        
+        unit = units[0]
+        
+        # Create 3 different fees, all assigned to same unit
+        fees = []
+        for i in range(3):
+            fee = FeeFactory.create(
+                estate=estate,
+                created_by=user,
+                name=f"Fee {i+1}",
+                amount=Decimal("1000.00") * (i + 1)
+            )
+            FeeAssignmentFactory.create(fee=fee, unit=unit)
+            fees.append(fee)
+        
+        # Pay all 3 fees
+        payment_url = reverse("payment-list")
+        for fee in fees:
+            assignment = fee.fee_assignments.get(unit=unit)
+            payment_data = {
+                "fee_assignment": str(assignment.id),
+                "amount": str(fee.amount),
+                "payment_method": "bank_transfer",
+            }
+            response = authenticated_client.post(
+                payment_url, payment_data, format="json"
+            )
+            assert response.status_code == 201
+        
+        # Verify all payments and receipts created
+        assert Payment.objects.filter(
+            fee_assignment__unit=unit
+        ).count() == 3
+        
+        assert Receipt.objects.filter(
+            payment__fee_assignment__unit=unit
+        ).count() == 3
 
 
 @pytest.mark.django_db
-class TestRealWorldScenarios:
-    """Test realistic real-world usage scenarios."""
+class TestRealisticUserScenarios:
+    """Test realistic end-to-end user scenarios."""
     
-    def test_estate_manager_daily_workflow(
-        self, authenticated_client, estate, unit
+    def test_estate_manager_monthly_workflow(
+        self, authenticated_client, estate, units, user
     ):
-        """Test typical estate manager daily workflow."""
-        # Morning: Create new tickets from resident calls
-        create_url = reverse('maintenance:maintenance-ticket-list')
+        """
+        Simulate estate manager's monthly workflow:
+        1. Create monthly fee
+        2. Check payment status throughout month
+        3. Record payments as they come in
+        4. Generate final report
+        """
+        # Week 1: Create monthly fee
+        fee_url = reverse("fee-list")
+        fee_data = {
+            "name": "January 2026 Maintenance",
+            "amount": "5000.00",
+            "due_date": (timezone.now() + timedelta(days=30)).date().isoformat(),
+            "estate": str(estate.id),
+            "assign_to_all_units": True,
+        }
         
-        ticket1 = authenticated_client.post(create_url, {
-            'title': 'Broken lock on main gate',
-            'description': 'Main gate lock is broken, security concern',
-            'category': 'SECURITY',
-            'estate': str(estate.id)
-        }, format='json')
+        fee_response = authenticated_client.post(fee_url, fee_data, format="json")
+        assert fee_response.status_code == 201
+        fee_id = fee_response.data["id"]
         
-        ticket2 = authenticated_client.post(create_url, {
-            'title': 'Water not running in Unit 101',
-            'description': 'No water supply in unit',
-            'category': 'WATER',
-            'estate': str(estate.id),
-            'unit': str(unit.id)
-        }, format='json')
+        # Week 2: Check initial status (all unpaid)
+        summary_url = reverse("fee-payment-summary", args=[fee_id])
+        response = authenticated_client.get(summary_url)
+        assert response.data["total_unpaid"] == 5
+        assert response.data["payment_completion_rate"] == 0
         
-        assert ticket1.status_code == 201
-        assert ticket2.status_code == 201
+        # Week 3: Record 3 payments
+        payment_url = reverse("payment-list")
+        fee = Fee.objects.get(id=fee_id)
+        for assignment in list(fee.fee_assignments.all())[:3]:
+            payment_data = {
+                "fee_assignment": str(assignment.id),
+                "amount": str(fee.amount),
+                "payment_method": "bank_transfer",
+            }
+            authenticated_client.post(payment_url, payment_data, format="json")
         
-        # Afternoon: Check open tickets
-        list_response = authenticated_client.get(
-            create_url,
-            {'status': 'OPEN'}
-        )
-        assert list_response.status_code == 200
-        assert list_response.data['count'] >= 2
+        # Week 4: Check progress
+        response = authenticated_client.get(summary_url)
+        assert response.data["total_paid"] == 3
+        assert response.data["total_unpaid"] == 2
+        assert response.data["payment_completion_rate"] == 60.0
         
-        # Evening: Resolve fixed issues
-        resolve_url = reverse(
-            'maintenance:maintenance-ticket-resolve',
-            args=[ticket1.data['id']]
-        )
-        resolve_response = authenticated_client.post(resolve_url)
-        assert resolve_response.status_code == 200
+        # Week 5: Record remaining payments
+        for assignment in fee.fee_assignments.filter(status='unpaid'):
+            payment_data = {
+                "fee_assignment": str(assignment.id),
+                "amount": str(fee.amount),
+                "payment_method": "cash",
+            }
+            authenticated_client.post(payment_url, payment_data, format="json")
         
-        # End of day: Check statistics
-        stats_url = reverse('maintenance:maintenance-ticket-statistics')
-        stats_response = authenticated_client.get(
-            stats_url,
-            {'estate_id': str(estate.id)}
-        )
-        assert stats_response.status_code == 200
-        assert stats_response.data['total_tickets'] >= 2
-        assert stats_response.data['open_tickets'] >= 1
-        assert stats_response.data['resolved_tickets'] >= 1
+        # Final check: All paid
+        response = authenticated_client.get(summary_url)
+        assert response.data["payment_completion_rate"] == 100.0
+        
+        # List all receipts
+        receipt_url = reverse("receipt-list")
+        receipt_response = authenticated_client.get(receipt_url)
+        assert receipt_response.data["count"] == 5

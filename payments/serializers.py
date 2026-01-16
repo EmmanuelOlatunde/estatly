@@ -9,6 +9,8 @@ Handles serialization and validation for fees, payments, and receipts.
 from rest_framework import serializers
 from django.utils import timezone
 from .models import Fee, FeeAssignment, Payment, Receipt
+from decimal import Decimal, ROUND_HALF_UP
+
 
 
 class FeeSerializer(serializers.ModelSerializer):
@@ -22,9 +24,12 @@ class FeeSerializer(serializers.ModelSerializer):
         source='estate.name',
         read_only=True
     )
+    estate = serializers.PrimaryKeyRelatedField(read_only=True)
+
     total_assigned_units = serializers.IntegerField(read_only=True)
     total_paid_count = serializers.IntegerField(read_only=True)
     total_unpaid_count = serializers.IntegerField(read_only=True)
+    id = serializers.CharField(read_only=True)
     
     class Meta:
         model = Fee
@@ -47,12 +52,24 @@ class FeeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
 
+
+
+
 class FeeCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating Fee instances."""
+    """Serializer for creating and updating Fee instances."""
+    
+    # Explicitly define amount field to accept any decimal places
+    # then round them in validation
+    amount = serializers.DecimalField(
+        max_digits=15,  # Allow more digits for input
+        decimal_places=2,  # Allow up to 5 decimal places on input
+        help_text="Fee amount (will be rounded to 2 decimal places)"
+    )
     
     assign_to_all_units = serializers.BooleanField(
         write_only=True,
         default=False,
+        required=False,
         help_text="If true, assign this fee to all units in the estate"
     )
     unit_ids = serializers.ListField(
@@ -77,6 +94,24 @@ class FeeCreateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id']
     
+    def validate_amount(self, value):
+        """
+        Validate and round amount to 2 decimal places.
+        
+        Accepts amounts with up to 5 decimal places and rounds
+        them to 2 decimal places using ROUND_HALF_UP.
+        """
+        if value <= 0:
+            raise serializers.ValidationError(
+                "Amount must be greater than zero."
+            )
+        
+        # Round to 2 decimal places using ROUND_HALF_UP
+        # This ensures 0.125 rounds to 0.13, not 0.12
+        rounded = value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        
+        return rounded
+    
     def validate_due_date(self, value):
         """Ensure due date is not in the past."""
         if value < timezone.now().date():
@@ -84,26 +119,34 @@ class FeeCreateSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, attrs):
-        """Validate that either assign_to_all_units or unit_ids is provided."""
-        assign_all = attrs.get('assign_to_all_units', False)
-        unit_ids = attrs.get('unit_ids', [])
+        """
+        Validate assignment method for creation.
         
-        if not assign_all and not unit_ids:
-            raise serializers.ValidationError(
-                "Must either set 'assign_to_all_units' to true or provide 'unit_ids'."
-            )
-        
-        if assign_all and unit_ids:
-            raise serializers.ValidationError(
-                "Cannot set both 'assign_to_all_units' and 'unit_ids'. Choose one."
-            )
+        For updates, assignment fields are optional.
+        """
+        # Only validate assignment on CREATE, not UPDATE
+        if self.instance is None:  # This is a create operation
+            assign_all = attrs.get('assign_to_all_units', False)
+            unit_ids = attrs.get('unit_ids', [])
+            
+            if not assign_all and not unit_ids:
+                raise serializers.ValidationError(
+                    "Must either set 'assign_to_all_units' to true or provide 'unit_ids'."
+                )
+            
+            if assign_all and unit_ids:
+                raise serializers.ValidationError(
+                    "Cannot set both 'assign_to_all_units' and 'unit_ids'. Choose one."
+                )
         
         return attrs
-
 
 class FeeAssignmentSerializer(serializers.ModelSerializer):
     """Serializer for reading FeeAssignment data."""
     
+    
+    fee = serializers.PrimaryKeyRelatedField(read_only=True)
+    unit = serializers.PrimaryKeyRelatedField(read_only=True)
     fee_name = serializers.CharField(source='fee.name', read_only=True)
     fee_amount = serializers.DecimalField(
         source='fee.amount',
@@ -138,7 +181,6 @@ class FeeAssignmentSerializer(serializers.ModelSerializer):
         """Check if this assignment has an associated payment."""
         return hasattr(obj, 'payment')
 
-
 class PaymentSerializer(serializers.ModelSerializer):
     """Serializer for reading Payment data."""
     
@@ -158,6 +200,11 @@ class PaymentSerializer(serializers.ModelSerializer):
         source='recorded_by.get_full_name',
         read_only=True
     )
+    id = serializers.UUIDField(read_only=True)
+    
+    # ✓ FIX: Use DateTimeField for Payment.payment_date (which is a DateTimeField in the model)
+    payment_date = serializers.DateTimeField(read_only=True)
+    
     has_receipt = serializers.SerializerMethodField()
     
     class Meta:
@@ -184,20 +231,21 @@ class PaymentSerializer(serializers.ModelSerializer):
             'recorded_by',
             'created_at',
             'updated_at',
+            'payment_date',  # ✓ Add this as read-only
         ]
     
     def get_has_receipt(self, obj):
         """Check if this payment has an associated receipt."""
-        return hasattr(obj, 'receipt')
-
+        return hasattr(obj, 'receipt') and obj.receipt is not None
 
 class PaymentCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating Payment instances (marking fee as paid)."""
+    """Serializer for creating payments."""
+    
+    fee_assignment = serializers.PrimaryKeyRelatedField(queryset=FeeAssignment.objects.all())
     
     class Meta:
         model = Payment
         fields = [
-            'id',
             'fee_assignment',
             'amount',
             'payment_method',
@@ -205,49 +253,52 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
             'reference_number',
             'notes',
         ]
-        read_only_fields = ['id']
     
     def validate_fee_assignment(self, value):
-        """Ensure the fee assignment is not already paid."""
+        """Validate fee_assignment is not already paid."""
         if value.status == FeeAssignment.PaymentStatus.PAID:
             raise serializers.ValidationError(
-                "This fee has already been paid."
+                "This fee has already been marked as paid."
             )
         
-        if hasattr(value, 'payment'):
+        # Check user has access to this estate
+        user = self.context['request'].user
+        if value.fee.estate.id != user.estate.id:
             raise serializers.ValidationError(
-                "A payment already exists for this fee assignment."
+                "You do not have permission to create payments for this fee."
             )
         
         return value
     
     def validate_amount(self, value):
-        """Ensure payment amount is positive."""
+        """Validate amount is positive."""
         if value <= 0:
-            raise serializers.ValidationError(
-                "Payment amount must be greater than zero."
-            )
+            raise serializers.ValidationError("Amount must be greater than zero.")
         return value
     
     def validate(self, attrs):
-        """Validate that payment amount matches fee amount."""
+        """Validate amount matches fee amount."""
         fee_assignment = attrs.get('fee_assignment')
         amount = attrs.get('amount')
         
         if fee_assignment and amount:
             if amount != fee_assignment.fee.amount:
                 raise serializers.ValidationError({
-                    'amount': f'Payment amount must match the fee amount ({fee_assignment.fee.amount})'
+                    'amount': f"Payment amount ({amount}) must match fee amount ({fee_assignment.fee.amount})"
                 })
         
         return attrs
-
-
+    
 class ReceiptSerializer(serializers.ModelSerializer):
     """Serializer for reading Receipt data."""
     
     payment_id = serializers.UUIDField(source='payment.id', read_only=True)
+    id = serializers.UUIDField(read_only=True)
     
+    # ✓ FIX: Add payment_date as DateField for Receipt model
+    # Check your Receipt model - if it has payment_date as a DateField, use this:
+    payment_date = serializers.DateField(read_only=True)
+
     class Meta:
         model = Receipt
         fields = [
@@ -259,7 +310,7 @@ class ReceiptSerializer(serializers.ModelSerializer):
             'unit_identifier',
             'fee_name',
             'amount',
-            'payment_date',
+            'payment_date',  # ✓ Add this
             'payment_method',
             'issued_at',
         ]
@@ -270,12 +321,10 @@ class ReceiptSerializer(serializers.ModelSerializer):
             'unit_identifier',
             'fee_name',
             'amount',
-            'payment_date',
+            'payment_date',  # ✓ Add here too
             'payment_method',
             'issued_at',
         ]
-
-
 class FeeDetailSerializer(serializers.ModelSerializer):
     """Detailed serializer for Fee with assignments included."""
     

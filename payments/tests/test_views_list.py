@@ -78,7 +78,9 @@ class TestFeeListEndpoint:
     
     def test_fees_ordered_by_created_at_desc(self, authenticated_client, estate, user):
         """Test fees are ordered by creation date (newest first)."""
+        import time
         fee1 = FeeFactory.create(estate=estate, created_by=user, name="First")
+        time.sleep(0.1)  # Ensure different timestamps
         fee2 = FeeFactory.create(estate=estate, created_by=user, name="Second")
         
         url = reverse("fee-list")
@@ -90,16 +92,20 @@ class TestFeeListEndpoint:
         assert results[1]["id"] == str(fee1.id)
     
     def test_search_fees_by_name(self, authenticated_client, estate, user):
-        """Test searching fees by name."""
+        """Test searching fees by name - only returns from user's estate."""
+        # Create fees in the SAME estate
         FeeFactory.create(estate=estate, created_by=user, name="Security Levy")
         FeeFactory.create(estate=estate, created_by=user, name="Water Bill")
-        
+
         url = reverse("fee-list")
         response = authenticated_client.get(url, {"search": "Security"})
-        
+
         assert response.status_code == 200
-        assert len(response.data["results"]) == 1
-        assert "Security" in response.data["results"][0]["name"]
+        results = response.data["results"]
+        
+        # Should only get 1 result
+        assert len(results) == 1
+        assert results[0]["name"] == "Security Levy"
 
 
 @pytest.mark.django_db
