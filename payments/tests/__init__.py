@@ -20,8 +20,8 @@ tests/test_views_update.py - Update/PATCH/PUT endpoint tests
 tests/test_views_delete.py - Delete endpoint tests
 tests/test_custom_actions.py - Custom @action tests
 tests/test_filters.py - Filter & query parameter tests
-tests/test_pagination.py - Pagination tests
 tests/test_ordering.py - Ordering/sorting tests
+
 tests/test_edge_cases.py - Boundary conditions & edge cases
 tests/test_error_handling.py - Error response tests
 tests/test_security.py - Security-specific tests (IDOR, XSS, etc.)

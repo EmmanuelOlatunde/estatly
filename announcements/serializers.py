@@ -90,14 +90,16 @@ class AnnouncementSerializer(serializers.ModelSerializer):
             return obj.message
         return f"{obj.message[:97]}..."
 
-
 class AnnouncementCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating new announcements.
-    
-    Excludes read-only fields and handles validation.
     """
-    
+
+    is_active = serializers.BooleanField(
+        required=False,
+        default=True
+    )
+
     class Meta:
         model = Announcement
         fields = [
@@ -105,57 +107,32 @@ class AnnouncementCreateSerializer(serializers.ModelSerializer):
             'message',
             'is_active',
         ]
-    
+
     def validate_title(self, value: str) -> str:
-        """
-        Validate the title field.
-        
-        Args:
-            value: Title value to validate
-            
-        Returns:
-            Cleaned title value
-            
-        Raises:
-            ValidationError: If title is invalid
-        """
         if not value or len(value.strip()) == 0:
             raise serializers.ValidationError(
                 "Title cannot be empty or contain only whitespace."
             )
-        
+
         if len(value.strip()) < 3:
             raise serializers.ValidationError(
                 "Title must be at least 3 characters long."
             )
-        
+
         return value.strip()
-    
+
     def validate_message(self, value: str) -> str:
-        """
-        Validate the message field.
-        
-        Args:
-            value: Message value to validate
-            
-        Returns:
-            Cleaned message value
-            
-        Raises:
-            ValidationError: If message is invalid
-        """
         if not value or len(value.strip()) == 0:
             raise serializers.ValidationError(
                 "Message cannot be empty or contain only whitespace."
             )
-        
+
         if len(value.strip()) < 10:
             raise serializers.ValidationError(
                 "Message must be at least 10 characters long."
             )
-        
-        return value.strip()
 
+        return value.strip()
 
 class AnnouncementUpdateSerializer(serializers.ModelSerializer):
     """

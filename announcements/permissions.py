@@ -173,3 +173,18 @@ class IsManager(permissions.BasePermission):
             return user.groups.filter(name__in=['Managers', 'Admins']).exists()
         
         return False
+
+
+class IsActiveUser(permissions.BasePermission):
+    """
+    Allows access only to active users.
+    """
+
+    message = "Your account is inactive."
+
+    def has_permission(self, request, view) -> bool:
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.is_active
+        )

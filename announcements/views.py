@@ -17,6 +17,8 @@ from django.http import HttpResponse
 from django.template.loader import render_to_string
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from .filters import AnnouncementFilter 
+from django.db.models import Q
 
 from maintenance.models import MaintenanceTicket
 
@@ -26,7 +28,7 @@ from .serializers import (
     AnnouncementCreateSerializer,
     AnnouncementUpdateSerializer,
 )
-from .permissions import IsManagerOrReadOnly, IsOwnerOrReadOnly
+from .permissions import IsManagerOrReadOnly, IsOwnerOrReadOnly, IsActiveUser
 from . import services
 
 logger = logging.getLogger(__name__)
@@ -48,27 +50,61 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     - print: Get a printable version of an announcement
     """
     
-    permission_classes = [IsAuthenticated, IsManagerOrReadOnly, IsOwnerOrReadOnly]
+    permission_classes = [IsAuthenticated, IsManagerOrReadOnly, IsOwnerOrReadOnly, IsActiveUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['is_active', 'created_by']
+    filterset_class = AnnouncementFilter
     search_fields = ['title', 'message']
     ordering_fields = ['created_at', 'updated_at', 'title']
     ordering = ['-created_at']
-    
+
 
     def get_queryset(self):
-        # 🚨 IMPORTANT: Swagger schema generation
         if getattr(self, 'swagger_fake_view', False):
-            return MaintenanceTicket.objects.none()
+            return Announcement.objects.none()
 
         user = self.request.user
+        queryset = Announcement.objects.all()
 
-        if not user.is_authenticated:
-            return MaintenanceTicket.objects.none()
+        # 🔑 Actions that MUST see the object
+        if self.action in [
+            'update',
+            'partial_update',
+            'destroy',
+            'print_announcement',
+        ]:
+            return queryset
 
-        queryset = MaintenanceTicket.objects.all()
+        # 🔑 Retrieve logic
+        if self.action == 'retrieve':
+            return queryset.filter(
+                Q(is_active=True) | Q(created_by=user)
+            )
 
-        return queryset.filter(created_by=user)
+    #    # LIST behavior
+    #     if user.is_estate_manager:
+    #         # Managers see ALL announcements (active + inactive)
+    #         return queryset
+
+        # # Regular users see only active announcements
+        # return queryset.filter(is_active=True)
+        # 📃 LIST behavior (query-aware)
+        include_inactive = self.request.query_params.get('include_inactive')
+        is_active_param = self.request.query_params.get('is_active')
+
+        # Explicit include inactive → start with all
+        if include_inactive == 'true':
+            qs = queryset
+        else:
+            qs = queryset.filter(is_active=True)
+
+        # Explicit is_active filter overrides
+        if is_active_param == 'true':
+            qs = qs.filter(is_active=True)
+        elif is_active_param == 'false':
+            qs = qs.filter(is_active=False)
+
+        return qs
+
 
 
 
@@ -117,10 +153,29 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             403: "Permission denied"
         }
     )
+
+    
     def create(self, request, *args, **kwargs):
-        """Create a new announcement."""
-        logger.info(f"User {request.user.id} creating announcement")
-        return super().create(request, *args, **kwargs)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        announcement = services.create_announcement(
+            created_by=request.user,
+            **serializer.validated_data
+        )
+
+        output_serializer = AnnouncementSerializer(
+            announcement,
+            context=self.get_serializer_context()
+        )
+
+        headers = self.get_success_headers(output_serializer.data)
+        return Response(
+            output_serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
     
     @swagger_auto_schema(
         operation_description="Update an announcement (owner only)",
@@ -323,4 +378,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         </html>
         """
         
-        return HttpResponse(html_content, content_type='text/html')
+        return HttpResponse(html_content, content_type='text/html; charset=utf-8')
+
+
+        

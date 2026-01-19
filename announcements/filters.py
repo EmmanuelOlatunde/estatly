@@ -5,10 +5,12 @@ Filter classes for announcements app.
 
 Provides advanced filtering capabilities for announcement queries.
 """
+import uuid
 
 import django_filters
 from django.db.models import Q
 from .models import Announcement
+from django.core.exceptions import ValidationError
 
 
 class AnnouncementFilter(django_filters.FilterSet):
@@ -68,15 +70,12 @@ class AnnouncementFilter(django_filters.FilterSet):
         label='Updated before'
     )
     
-    created_by = django_filters.UUIDFilter(
-        field_name='created_by__id',
-        label='Created by user ID'
-    )
+    created_by = django_filters.CharFilter(method='filter_created_by')
+
     
     class Meta:
         model = Announcement
         fields = [
-            'is_active',
             'created_by',
         ]
     
@@ -100,3 +99,15 @@ class AnnouncementFilter(django_filters.FilterSet):
         return queryset.filter(
             Q(title__icontains=value) | Q(message__icontains=value)
         )
+
+    def filter_created_by(self, queryset, name, value):
+        """
+        Safely filter by creator UUID.
+        Invalid UUIDs return an empty queryset instead of raising errors.
+        """
+        try:
+            uuid_value = uuid.UUID(str(value))
+        except (ValueError, TypeError, AttributeError):
+            return queryset.none()
+
+        return queryset.filter(created_by__id=uuid_value)
