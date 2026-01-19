@@ -85,3 +85,8 @@ class Announcement(models.Model):
         """Override save to call full_clean."""
         self.full_clean()
         super().save(*args, **kwargs)
+
+    # def save(self, *args, **kwargs):
+    #     self.full_clean()
+    #     self.updated_at = timezone.now()  # ✅ force update
+    #     super().save(*args, **kwargs)

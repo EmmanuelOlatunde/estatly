@@ -5,9 +5,9 @@ Test suite for announcements app.
 
 Run with: pytest tests/
 
-pytest announcements/tests/test_edge_cases.py
-
-
+pytest announcements/tests/test_integration.py
+test_integration
+test_views_list
 Edge Cases & Security
 
 tests/test_edge_cases.py - Boundary conditions and edge cases
@@ -59,5 +59,12 @@ Advanced Features
 tests/test_custom_actions.py - Print announcement action
 tests/test_filters.py - Filtering and search functionality
 tests/test_pagination_ordering.py - Pagination and ordering
+
+Edge Cases & Security
+
+tests/test_edge_cases.py - Boundary conditions and edge cases
+tests/test_security.py - Security vulnerabilities (IDOR, XSS, SQL injection)
+tests/test_error_handling.py - Error responses and exception handling
+
 
 """
