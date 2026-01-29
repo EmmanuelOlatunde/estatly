@@ -83,7 +83,11 @@ class DocumentCreateSerializer(serializers.ModelSerializer):
     
     Used when initiating document generation.
     """
-    
+    related_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,     
+        allow_null=True     
+    )
     class Meta:
         model = Document
         fields = [
@@ -98,7 +102,18 @@ class DocumentCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """Validate document creation data."""
         document_type = attrs.get('document_type')
-        
+        request = self.context.get('request')
+        user = request.user if request else None
+
+        # --- New: Enforce related_user for non-admins ---
+        # If user is not staff/admin, related_user MUST be provided
+        if user and not (user.is_staff or user.is_superuser):
+            if not attrs.get('related_user'):
+                raise serializers.ValidationError({
+                    'related_user': 'This field is required for regular users.'
+                })
+
+        # --- Existing Validation ---
         if document_type == DocumentType.PAYMENT_RECEIPT:
             if not attrs.get('related_payment_id'):
                 raise serializers.ValidationError({
@@ -112,7 +127,6 @@ class DocumentCreateSerializer(serializers.ModelSerializer):
                 })
         
         return attrs
-
 
 class DocumentUpdateSerializer(serializers.ModelSerializer):
     """
@@ -157,6 +171,8 @@ class DocumentListSerializer(serializers.ModelSerializer):
             'status',
             'status_display',
             'related_user',
+            'related_payment_id',        # 👈 ADD
+            'related_announcement_id',   # 👈 ADD
             'file_size',
             'created_at',
             'generated_at',

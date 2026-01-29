@@ -47,3 +47,13 @@ class EstateOwnedMixin(models.Model):
     class Meta:
         abstract = True
 
+# core/mixins.py or similar
+class SwaggerSafeQuerysetMixin:
+    """
+    Mixin to prevent queryset evaluation during Swagger schema generation.
+    """
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            # Return empty queryset during schema generation
+            return self.queryset.model.objects.none()
+        return super().get_queryset()

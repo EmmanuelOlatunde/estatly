@@ -39,52 +39,26 @@ class IsDocumentOwnerOrAdmin(permissions.BasePermission):
         logger.warning(f"Document {obj.id} has no related_user, denying access")
         return False
 
-
 class CanDownloadDocument(permissions.BasePermission):
     """
     Permission check for document downloads.
-    
-    Allows downloading only if:
-    - Document is completed and has a file
-    - User owns the document or is admin
-    - Document is not deleted
+
+    Only checks ownership/admin.
+    Business rules belong in the view.
     """
-    
+
     def has_permission(self, request, view):
-        """Check if user has permission to download."""
         return request.user and request.user.is_authenticated
-    
+
     def has_object_permission(self, request, view, obj):
-        """Check if user can download specific document."""
-        from .models import DocumentStatus
-        
-        if obj.is_deleted:
-            logger.warning(f"Attempt to download deleted document {obj.id}")
-            return False
-        
-        if obj.status != DocumentStatus.COMPLETED:
-            logger.warning(
-                f"Attempt to download incomplete document {obj.id} "
-                f"(status: {obj.status})"
-            )
-            return False
-        
-        if not obj.file:
-            logger.warning(f"Attempt to download document {obj.id} with no file")
-            return False
-        
         if request.user.is_staff or request.user.is_superuser:
             return True
-        
+
         if hasattr(obj, 'related_user') and obj.related_user:
-            is_owner = obj.related_user == request.user
-            if not is_owner:
-                logger.warning(
-                    f"User {request.user.id} denied download of document {obj.id}"
-                )
-            return is_owner
-        
+            return obj.related_user == request.user
+
         return False
+
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):

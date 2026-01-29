@@ -68,6 +68,8 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
         Returns:
             Serializer class for the current action
         """
+
+            
         if self.action == 'list':
             return MaintenanceTicketListSerializer
         elif self.action == 'create':
@@ -90,24 +92,25 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), IsTicketCreatorOrAdmin()]
         
     def get_queryset(self):
-        """
-        Filter queryset based on user permissions and query parameters.
-        """
+        if getattr(self, 'swagger_fake_view', False):
+            return MaintenanceTicket.objects.none()
+
+        user = self.request.user
+
+        if not user.is_authenticated:
+            return MaintenanceTicket.objects.none()
+
         queryset = super().get_queryset().select_related(
             'created_by',
             'unit',
             'estate'
         )
 
-        user = self.request.user
-
-        # Staff can see all tickets
         if not user.is_staff:
-            # Regular users can only see tickets they created
             queryset = queryset.filter(created_by=user)
 
-        # Let DjangoFilterBackend and custom filter class handle query params
         return queryset
+
 
 
     @swagger_auto_schema(
@@ -340,15 +343,6 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
     @swagger_auto_schema(
         method='get',
         operation_description="Get ticket statistics for an estate",
-        manual_parameters=[
-            openapi.Parameter(
-                'estate_id',
-                openapi.IN_QUERY,
-                description="UUID of the estate",
-                type=openapi.TYPE_STRING,
-                required=True
-            )
-        ],
         responses={
             200: openapi.Response(
                 description="Statistics data",

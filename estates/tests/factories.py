@@ -43,3 +43,5 @@ class EstateFactory(DjangoModelFactory):
     is_active = True
     description = factory.Faker("text", max_nb_chars=200)
     address = factory.Faker("address")
+
+    

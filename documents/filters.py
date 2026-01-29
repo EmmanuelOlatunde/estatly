@@ -1,6 +1,7 @@
 """
 Filter classes for documents app.
 """
+from django.db.models import Q
 
 import django_filters
 # from django.db.models import Q
@@ -12,14 +13,12 @@ class DocumentFilter(django_filters.FilterSet):
     FilterSet for Document model with common query patterns.
     """
     
-    document_type = django_filters.ChoiceFilter(
+    document_type = django_filters.CharFilter(
         field_name='document_type',
-        choices=DocumentType.choices,
         help_text='Filter by document type'
     )
-    status = django_filters.ChoiceFilter(
+    status = django_filters.CharFilter(
         field_name='status',
-        choices=DocumentStatus.choices,
         help_text='Filter by generation status'
     )
     related_user = django_filters.UUIDFilter(
@@ -67,10 +66,10 @@ class DocumentFilter(django_filters.FilterSet):
         help_text='Filter by whether document has a file attached'
     )
     
-    # search = django_filters.CharFilter(
-    #     method='filter_search',
-    #     help_text='Search in title and error message'
-    # )
+    search = django_filters.CharFilter(
+        method='filter_search',
+        help_text='Search in title and error message'
+    )
     
     class Meta:
         model = Document
@@ -84,14 +83,13 @@ class DocumentFilter(django_filters.FilterSet):
             return queryset.exclude(file='')
         return queryset.filter(file='')
     
-    # def filter_search(self, queryset, name, value):
-    #     """Search in title and error message fields."""
-    #     if value:
-    #         return queryset.filter(
-    #             Q(title__icontains=value) |
-    #             Q(error_message__icontains=value)
-    #         )
-    #     return queryset
+    def filter_search(self, queryset, name, value):
+        if not value:
+            return queryset
+        return queryset.filter(
+            Q(title__icontains=value)
+        )
+
 
 
 class DocumentDownloadFilter(django_filters.FilterSet):

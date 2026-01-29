@@ -29,7 +29,7 @@ urlpatterns = [
     path('api/maintenance/', include('maintenance.urls')),
     path('api/announcements/', include('announcements.urls')),
     path('api/reports/', include('reports.urls')),
-    path('api/documents/', include('documents.urls')),
+    path('api/', include('documents.urls')),
 
     # Swagger documentation URLs
     re_path(r'^swagger(?P<format>\.json|\.yaml)$', 

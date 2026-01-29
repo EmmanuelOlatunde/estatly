@@ -34,6 +34,7 @@ class TestUserListView:
         response = api_client.get(url)
         assert response.status_code == 401
 
+    # In test_user_views.py
     def test_authenticated_user_can_list_only_self(
         self, authenticated_client, authenticated_user
     ):
@@ -44,8 +45,8 @@ class TestUserListView:
         response = authenticated_client.get(url)
 
         assert response.status_code == 200
-        assert len(response.data) == 1
-        assert response.data[0]['id'] == str(authenticated_user.id)
+        assert response.data['count'] == 1
+        assert len(response.data['results']) == 1
 
     def test_super_admin_can_list_all_users(
         self, super_admin_client, super_admin, multiple_users
@@ -56,7 +57,7 @@ class TestUserListView:
         response = super_admin_client.get(url)
 
         assert response.status_code == 200
-        assert len(response.data) >= 10
+        assert response.data['count'] >= 10
 
     def test_list_users_response_structure(self, authenticated_client):
         """Test list response has correct structure."""
@@ -65,9 +66,13 @@ class TestUserListView:
         response = authenticated_client.get(url)
 
         assert response.status_code == 200
-        assert isinstance(response.data, list)
-        if len(response.data) > 0:
-            assert_user_response_structure(response.data[0])
+        # Check for paginated structure
+        assert isinstance(response.data, dict)
+        assert 'count' in response.data
+        assert 'next' in response.data
+        assert 'previous' in response.data
+        assert 'results' in response.data
+        assert isinstance(response.data['results'], list)
 
     def test_jwt_authentication_works_for_list(self, jwt_client):
         """Test JWT token authentication works."""

@@ -336,6 +336,7 @@ class TestPrivilegeEscalation:
 class TestCrossUserDataAccess:
     """Test cross-user data access is prevented."""
 
+    # In test_security.py
     def test_user_list_filtered_by_user(
         self, authenticated_client, authenticated_user
     ):
@@ -346,8 +347,11 @@ class TestCrossUserDataAccess:
         response = authenticated_client.get(url)
 
         assert response.status_code == 200
-        assert len(response.data) == 1
-        assert response.data[0]['id'] == str(authenticated_user.id)
+        # Check the paginated response structure
+        assert 'results' in response.data
+        assert response.data['count'] == 1
+        assert len(response.data['results']) == 1
+        assert response.data['results'][0]['id'] == str(authenticated_user.id)
 
     def test_super_admin_sees_all_users(
         self, super_admin_client, multiple_users
@@ -358,8 +362,12 @@ class TestCrossUserDataAccess:
         response = super_admin_client.get(url)
 
         assert response.status_code == 200
-        assert len(response.data) >= 10
-
+        assert 'results' in response.data
+        # Check total count, not just current page
+        assert response.data['count'] >= 10
+        # Optionally verify first page has results
+        assert len(response.data['results']) > 0
+    
     def test_jwt_token_tied_to_specific_user(
         self, jwt_client, authenticated_user, other_user
     ):

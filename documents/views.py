@@ -78,6 +78,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
         Admin users see all documents.
         Regular users only see their own documents.
         """
+        if getattr(self, 'swagger_fake_view', False):
+            return Document.objects.none()
         user = self.request.user
         
         if user.is_staff or user.is_superuser:
@@ -181,6 +183,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         methods=['get'],
         permission_classes=[IsAuthenticated, CanDownloadDocument]
     )
+    
     def download(self, request, pk=None):
         """
         Download document PDF file.
@@ -188,6 +191,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
         Records download event for analytics.
         """
         document = self.get_object()
+        if document.is_deleted:
+            return Response(
+                {'error': 'Document not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
         
         if document.status != DocumentStatus.COMPLETED or not document.file:
             logger.warning(f"Attempt to download incomplete document: {document.id}")
@@ -369,6 +378,9 @@ class DocumentDownloadViewSet(viewsets.ReadOnlyModelViewSet):
         Admin users see all downloads.
         Regular users only see downloads of their own documents.
         """
+            # Short-circuit during schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return DocumentDownload.objects.none()
         user = self.request.user
         
         if user.is_staff or user.is_superuser:

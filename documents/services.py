@@ -24,7 +24,7 @@ def create_document(
     *,
     document_type: str,
     title: str,
-    related_user,
+    related_user=None,
     related_payment_id: Optional[UUID] = None,
     related_announcement_id: Optional[UUID] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -239,6 +239,7 @@ def regenerate_document(
     
     if document.file:
         document.file.delete(save=False)
+        document.file = None
     
     if metadata:
         document.metadata = metadata
@@ -249,6 +250,7 @@ def regenerate_document(
     document.error_message = ''
     
     document.save(update_fields=[
+       'file',          # 👈 THIS WAS MISSING
         'status',
         'metadata',
         'file_size',
