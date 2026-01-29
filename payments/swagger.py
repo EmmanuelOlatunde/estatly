@@ -124,6 +124,7 @@ payment_create_schema = swagger_auto_schema(
 
 
 fee_payment_summary_schema = swagger_auto_schema(
+    method='get',  # FIXED: Added method parameter to prevent duplicate parameters
     operation_description="""
     Get payment summary statistics for a fee.
     
@@ -154,6 +155,7 @@ fee_payment_summary_schema = swagger_auto_schema(
 
 
 assign_to_units_schema = swagger_auto_schema(
+    method='post',  # FIXED: Added method parameter to prevent duplicate parameters
     operation_description="""
     Assign an existing fee to additional units.
     
@@ -182,6 +184,7 @@ assign_to_units_schema = swagger_auto_schema(
 
 
 receipt_download_schema = swagger_auto_schema(
+    method='get',  # FIXED: Added method parameter to prevent duplicate parameters
     operation_description="""
     Download a receipt as PDF.
     

@@ -228,6 +228,7 @@ update_profile_schema = swagger_auto_schema(
 
 # Activate user documentation
 activate_user_schema = swagger_auto_schema(
+    method='post',  # FIXED: Added method parameter to prevent duplicate parameters
     operation_id='activate_user',
     operation_description='Activate a user account. Requires super admin privileges.',
     responses={
@@ -243,11 +244,11 @@ activate_user_schema = swagger_auto_schema(
         status.HTTP_403_FORBIDDEN: error_response_schema,
     },
     tags=['User Management'],
-    
 )
 
 # Deactivate user documentation
 deactivate_user_schema = swagger_auto_schema(
+    method='post',  # FIXED: Added method parameter to prevent duplicate parameters
     operation_id='deactivate_user',
     operation_description='Deactivate a user account. Requires super admin privileges. Cannot deactivate super admin accounts.',
     responses={
@@ -264,5 +265,4 @@ deactivate_user_schema = swagger_auto_schema(
         status.HTTP_403_FORBIDDEN: error_response_schema,
     },
     tags=['User Management'],
-    
 )

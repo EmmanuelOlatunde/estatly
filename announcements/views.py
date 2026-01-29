@@ -51,9 +51,9 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     """
     
     permission_classes = [IsAuthenticated, IsManagerOrReadOnly, IsOwnerOrReadOnly, IsActiveUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend,  OrderingFilter]
     filterset_class = AnnouncementFilter
-    search_fields = ['title', 'message']
+    # search_fields = ['title', 'message']
     ordering_fields = ['created_at', 'updated_at', 'title']
     ordering = ['-created_at']
 
