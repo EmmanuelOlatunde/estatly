@@ -11,6 +11,7 @@ from django.core.validators import EmailValidator
 from django.db import models
 from django.utils import timezone
 from estates.models import Estate
+from django.core.exceptions import ValidationError
 
 
 class UserManager(BaseUserManager):
@@ -79,13 +80,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         REGULAR = 'REGULAR', 'Regular'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    estate = models.ForeignKey(
-        'estates.Estate',
+    estate = models.OneToOneField(
+        Estate,
         on_delete=models.CASCADE,
         null=True,
-        blank=True,
-        related_name='managers'
+        blank=True
     )
+
 
     email = models.EmailField(
         max_length=255,
@@ -147,10 +148,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         """Check if user is an estate manager."""
         return self.role == self.Role.ESTATE_MANAGER
 
+
     def clean(self):
-        """Validate model fields."""
+        """Validate model fields and enforce role rules."""
         super().clean()
+
+        # Always normalize email
         self.email = self.__class__.objects.normalize_email(self.email)
+
+        # Enforce estate-manager invariant
+        if self.role == self.Role.ESTATE_MANAGER and not self.estate:
+            raise ValidationError({
+                "estate": "Estate managers must be assigned to an estate."
+            })
+
+        # (Optional hardening)
+        if self.role != self.Role.ESTATE_MANAGER and self.estate:
+            raise ValidationError({
+                "estate": "Only estate managers can be assigned to an estate."
+            })
 
 
 class PasswordResetToken(models.Model):

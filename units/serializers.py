@@ -7,7 +7,7 @@ Handles serialization and validation of Unit model data.
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Unit
-from estates.models import Estate
+# from estates.models import Estate
 User = get_user_model()
 
 
@@ -81,11 +81,8 @@ class UnitCreateSerializer(serializers.ModelSerializer):
     Excludes owner field as it will be set from request.user.
     Estate field is required.
     """
-    estate = serializers.PrimaryKeyRelatedField(
-        queryset=Estate.objects.all(),
-        required=True,
-        help_text="The estate this unit belongs to"
-    )
+    estate = serializers.UUIDField(required=True)
+
     unit_type = serializers.ChoiceField(
         choices=Unit.UnitType.choices,
         required=True,  # Make sure this is explicitly set

@@ -5,6 +5,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from accounts.models import User
 
 from .models import Estate
 from .serializers import (
@@ -56,23 +57,30 @@ class EstateViewSet(viewsets.ModelViewSet):
     # -------------------------
     # Core DRF Overrides
     # -------------------------
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'statistics', 'by_type']:
-            return [AllowAny()]
-        return [IsAuthenticated(), CanManageEstate()]
+    def get_queryset(self):
+        user = self.request.user
+
+        if user.is_superuser:
+            return Estate.objects.all()
+
+        if user.role == User.Role.ESTATE_MANAGER:
+            return Estate.objects.filter(id=user.estate_id)
+
+        return Estate.objects.none()
+
 
     def get_serializer_class(self):
         return self.serializer_action_map.get(self.action, EstateSerializer)
 
-    def get_queryset(self):
-        queryset = super().get_queryset()
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
 
-        # For list view: only active estates by default
-        if self.action == "list" and "is_active" not in self.request.query_params:
-            queryset = queryset.filter(is_active=True)
+    #     # For list view: only active estates by default
+    #     if self.action == "list" and "is_active" not in self.request.query_params:
+    #         queryset = queryset.filter(is_active=True)
 
-        # For retrieve view: include all estates
-        return queryset
+    #     # For retrieve view: include all estates
+    #     return queryset
 
 
     def perform_create(self, serializer):

@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg.utils import swagger_auto_schema
+from estates.models import Estate
 
 from .models import Unit
 from .serializers import (
@@ -116,31 +117,38 @@ class UnitViewSet(viewsets.ModelViewSet):
     )
 
     def create(self, request, *args, **kwargs):
-        """
-        Create a new unit for the authenticated user.
-        
-        The user is automatically set as the owner.
-        Estate must be provided in the request data.
-        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         try:
+            estate = Estate.objects.get(
+                id=serializer.validated_data["estate"]
+            )
+
             unit = services.create_unit(
                 owner=request.user,
-                **serializer.validated_data  # This now includes 'estate'
+                estate=estate,
+                identifier=serializer.validated_data["identifier"],
+                unit_type=serializer.validated_data["unit_type"],
+                occupant_name=serializer.validated_data.get("occupant_name"),
+                occupant_phone=serializer.validated_data.get("occupant_phone"),
+                description=serializer.validated_data.get("description"),
+                is_occupied=serializer.validated_data.get("is_occupied", False),
+                is_active=serializer.validated_data.get("is_active", True),
             )
-            output_serializer = UnitSerializer(unit)
+
             return Response(
-                output_serializer.data,
+                UnitSerializer(unit).data,
                 status=status.HTTP_201_CREATED
             )
-        except ValueError as e:
+
+        except Estate.DoesNotExist:
             return Response(
-                {'error': str(e)},
+                {"estate": "Invalid estate ID."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        
     @swagger_auto_schema(
         operation_description="Update a unit",
         request_body=UnitUpdateSerializer,

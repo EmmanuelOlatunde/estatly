@@ -72,45 +72,45 @@ VALIDATION_ERROR_EXAMPLE = {
 }
 
 
-# Custom parameter definitions
-ESTATE_ID_PARAM = openapi.Parameter(
-    'estate_id',
-    openapi.IN_QUERY,
-    description="Filter tickets by estate UUID",
-    type=openapi.TYPE_STRING,
-    format=openapi.FORMAT_UUID
-)
+# # Custom parameter definitions
+# ESTATE_ID_PARAM = openapi.Parameter(
+#     'estate_id',
+#     openapi.IN_QUERY,
+#     description="Filter tickets by estate UUID",
+#     type=openapi.TYPE_STRING,
+#     format=openapi.FORMAT_UUID
+# )
 
-STATUS_PARAM = openapi.Parameter(
-    'status',
-    openapi.IN_QUERY,
-    description="Filter tickets by status (OPEN or RESOLVED)",
-    type=openapi.TYPE_STRING,
-    enum=['OPEN', 'RESOLVED']
-)
+# STATUS_PARAM = openapi.Parameter(
+#     'status',
+#     openapi.IN_QUERY,
+#     description="Filter tickets by status (OPEN or RESOLVED)",
+#     type=openapi.TYPE_STRING,
+#     enum=['OPEN', 'RESOLVED']
+# )
 
-CATEGORY_PARAM = openapi.Parameter(
-    'category',
-    openapi.IN_QUERY,
-    description="Filter tickets by category",
-    type=openapi.TYPE_STRING,
-    enum=['WATER', 'ELECTRICITY', 'SECURITY', 'WASTE', 'OTHER']
-)
+# CATEGORY_PARAM = openapi.Parameter(
+#     'category',
+#     openapi.IN_QUERY,
+#     description="Filter tickets by category",
+#     type=openapi.TYPE_STRING,
+#     enum=['WATER', 'ELECTRICITY', 'SECURITY', 'WASTE', 'OTHER']
+# )
 
-SEARCH_PARAM = openapi.Parameter(
-    'search',
-    openapi.IN_QUERY,
-    description="Search tickets by title or description",
-    type=openapi.TYPE_STRING
-)
+# SEARCH_PARAM = openapi.Parameter(
+#     'search',
+#     openapi.IN_QUERY,
+#     description="Search tickets by title or description",
+#     type=openapi.TYPE_STRING
+# )
 
-ORDERING_PARAM = openapi.Parameter(
-    'ordering',
-    openapi.IN_QUERY,
-    description="Order results by field (prefix with - for descending)",
-    type=openapi.TYPE_STRING,
-    enum=['created_at', '-created_at', 'updated_at', '-updated_at', 'status', '-status']
-)
+# ORDERING_PARAM = openapi.Parameter(
+#     'ordering',
+#     openapi.IN_QUERY,
+#     description="Order results by field (prefix with - for descending)",
+#     type=openapi.TYPE_STRING,
+#     enum=['created_at', '-created_at', 'updated_at', '-updated_at', 'status', '-status']
+# )
 
 
 # Response schemas

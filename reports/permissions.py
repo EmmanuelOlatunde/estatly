@@ -1,6 +1,7 @@
 # reports/permissions.py
 import logging
 from rest_framework.permissions import BasePermission
+from accounts.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,12 @@ class CanAccessReports(BasePermission):
             return False
 
         # Super admins always allowed
-        if user.is_superuser or user.role == 'super_admin':
+        if user.is_superuser or user.role == User.Role.SUPER_ADMIN:
             logger.info(f"Super admin {user.id} granted report access")
             return True
 
         # Estate manager MUST have a valid estate_id
-        if user.role == 'estate_manager':  # Changed from user.Role.ESTATE_MANAGER
+        if user.role == User.Role.ESTATE_MANAGER:
             if user.estate_id:
                 logger.info(
                     f"Estate manager {user.id} granted report access for estate {user.estate_id}"

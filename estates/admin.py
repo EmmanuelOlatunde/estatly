@@ -3,16 +3,39 @@
 Django admin configuration for estate app.
 """
 
+from django import forms
 from django.contrib import admin
+from accounts.models import User
 from .models import Estate
+
+
+
+class EstateAdminForm(forms.ModelForm):
+    """
+    Admin form to allow assigning ONE estate manager during estate creation.
+    """
+
+    manager = forms.ModelChoiceField(
+        queryset=User.objects.filter(role=User.Role.ESTATE_MANAGER),
+        required=False,
+        # estate__isnull=True,
+        help_text="Assign an estate manager to this estate"
+    )
+
+    class Meta:
+        model = Estate
+        fields = "__all__"
 
 
 @admin.register(Estate)
 class EstateAdmin(admin.ModelAdmin):
     """Admin interface for Estate model."""
-    
+    form = EstateAdminForm
+
     list_display = [
         'name',
+        'manager',
+
         'estate_type',
         'approximate_units',
         'total_units',        # 👈 total units
@@ -56,6 +79,12 @@ class EstateAdmin(admin.ModelAdmin):
                 'address',
             )
         }),
+        ('Assignment', {
+            'fields': (
+                'manager',
+            )
+        }),
+
         ('Status', {
             'fields': (
                 'is_active',
@@ -102,3 +131,31 @@ class EstateAdmin(admin.ModelAdmin):
     def active_units(self, obj):
         return obj.active_units
     active_units.short_description = 'Active Units'
+
+    def manager(self, obj):
+        try:
+            return obj.user.email
+        except User.DoesNotExist:
+            return "—"
+
+    manager.short_description = "Estate Manager"
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+
+        new_manager = form.cleaned_data.get("manager")
+
+        # Remove old manager if exists
+        try:
+            old_manager = obj.user
+        except User.DoesNotExist:
+            old_manager = None
+
+        if old_manager and old_manager != new_manager:
+            old_manager.estate = None
+            old_manager.save(update_fields=["estate"])
+
+        if new_manager:
+            new_manager.estate = obj
+            new_manager.save(update_fields=["estate"])
+

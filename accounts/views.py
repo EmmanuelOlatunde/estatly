@@ -12,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from . import services
 from .permissions import IsSuperAdminOrSelf
@@ -66,6 +67,8 @@ class UserViewSet(viewsets.ModelViewSet):
     """
 
     queryset = User.objects.all()
+    authentication_classes = [JWTAuthentication]
+
     permission_classes = [IsAuthenticated, IsSuperAdminOrSelf]
     serializer_class = UserSerializer
 
@@ -296,41 +299,39 @@ class RegisterView(APIView):
             )
 
 
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
 
-    @login_schema
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        try:
-            user = services.authenticate_user(
-                email=serializer.validated_data['email'],
-                password=serializer.validated_data['password']
-            )
+        user = services.authenticate_user(
+            email=serializer.validated_data['email'],
+            password=serializer.validated_data['password']
+        )
 
-            if user is None:
-                return Response(
-                    {'detail': 'Invalid email or password'},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-
-            # --- FIX: update last_login ---
-            user.last_login = timezone.now()
-            user.save(update_fields=["last_login"])
-
+        if user is None:
             return Response(
-                UserSerializer(user).data,
-                status=status.HTTP_200_OK
+                {'detail': 'Invalid email or password'},
+                status=status.HTTP_401_UNAUTHORIZED
             )
 
-        except ValueError as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": UserSerializer(user).data
+        }, status=status.HTTP_200_OK)
+
+
+
 
 class PasswordResetRequestView(APIView):
     """
