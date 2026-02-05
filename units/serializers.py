@@ -54,6 +54,11 @@ class UnitListSerializer(serializers.ModelSerializer):
     Optimized for list views with minimal fields.
     """
     
+    estate_name = serializers.CharField(
+        source='estate.name',
+        read_only=True
+    )
+    
     unit_type_display = serializers.CharField(
         source='get_unit_type_display',
         read_only=True
@@ -63,11 +68,13 @@ class UnitListSerializer(serializers.ModelSerializer):
         model = Unit
         fields = [
             'id',
-            
+            'estate',           # ✅ ADD THIS
+            'estate_name',      # ✅ ADD THIS
             'identifier',
             'unit_type',
             'unit_type_display',
             'occupant_name',
+            'occupant_phone',   # ✅ ADD THIS if missing
             'is_occupied',
             'is_active',
             'created_at',
