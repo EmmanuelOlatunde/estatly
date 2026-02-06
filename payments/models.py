@@ -210,8 +210,19 @@ class Payment(models.Model):
 
 
 class Receipt(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4,  # This was likely missing!
+        editable=False
+    )
+    
+    receipt_number = models.CharField(
+        max_length=50, 
+        unique=True,
+        blank=True  # Allow blank so save() can generate it
+    )
     payment = models.OneToOneField(Payment, on_delete=models.CASCADE, related_name='receipt')
-    receipt_number = models.CharField(max_length=50, unique=True)
+    # receipt_number = models.CharField(max_length=50, unique=True)
     estate_name = models.CharField(max_length=255)
     unit_identifier = models.CharField(max_length=255)
     fee_name = models.CharField(max_length=255)

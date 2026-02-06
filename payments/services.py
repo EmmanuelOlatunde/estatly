@@ -148,58 +148,82 @@ def assign_fee_to_units(
     return created_assignments
 
 
+
+
 def mark_fee_as_paid(
     *,
-    fee_assignment: FeeAssignment,
+    fee_assignment,
     amount: Decimal,
     payment_method: str,
-    recorded_by: "AbstractBaseUser",
+    recorded_by,
     payment_date: Optional[datetime] = None,
     reference_number: str = "",
     notes: str = ""
-) -> Payment:
+):
     """
-    Mark a fee assignment as paid by creating a payment record.
+    Mark a fee assignment as paid and generate receipt.
+    
+    NOW ALSO CREATES A DOCUMENT RECORD THAT TRIGGERS PDF GENERATION.
     """
-    if fee_assignment.status == FeeAssignment.PaymentStatus.PAID:
+    # Validation (same as before)
+    if fee_assignment.status == 'paid':
         raise ValidationError("This fee has already been marked as paid")
     
-    try:
-        existing_payment = fee_assignment.payment
+    if hasattr(fee_assignment, 'payment'):
         raise ValidationError("A payment record already exists for this fee")
-    except Payment.DoesNotExist:
-        pass
     
     if amount != fee_assignment.fee.amount:
         raise ValidationError(
             f"Payment amount ({amount}) must match fee amount ({fee_assignment.fee.amount})"
         )
     
-    # Rest of implementation...
-    payment = Payment.objects.create(
-        fee_assignment=fee_assignment,
-        amount=amount,
-        payment_method=payment_method,
-        payment_date=payment_date or timezone.now(),
-        reference_number=reference_number,
-        notes=notes,
-        recorded_by=recorded_by
-    )
-    
-    fee_assignment.status = FeeAssignment.PaymentStatus.PAID
-    fee_assignment.save()
-    
-    # Let the model auto-generate receipt_number
-    Receipt.objects.create(
-        payment=payment,
-        # receipt_number will be auto-generated in save()
-        estate_name=fee_assignment.fee.estate.name,
-        unit_identifier=fee_assignment.unit.identifier,
-        fee_name=fee_assignment.fee.name,
-        amount=payment.amount,
-        payment_date=payment.payment_date.date(),
-        payment_method=payment.payment_method
-    )
+    with transaction.atomic():
+        # Create payment
+        payment = Payment.objects.create(
+            fee_assignment=fee_assignment,
+            amount=amount,
+            payment_method=payment_method,
+            payment_date=payment_date or timezone.now(),
+            reference_number=reference_number,
+            notes=notes,
+            recorded_by=recorded_by
+        )
+        
+        # Update fee assignment status
+        fee_assignment.status = 'paid'
+        fee_assignment.save(update_fields=['status', 'updated_at'])
+        
+        # Create receipt (old way - still works)
+        receipt = Receipt.objects.create(
+            payment=payment,
+            estate_name=fee_assignment.fee.estate.name,
+            unit_identifier=fee_assignment.unit.identifier,
+            fee_name=fee_assignment.fee.name,
+            amount=payment.amount,
+            payment_date=payment.payment_date.date(),
+            payment_method=payment.payment_method
+        )
+        
+        # ✅ NEW: Create document record for PDF receipt
+        # This will automatically trigger PDF generation via signal
+        from documents.models import Document, DocumentType
+        
+        Document.objects.create(
+            document_type=DocumentType.PAYMENT_RECEIPT,
+            title=f"Receipt - {fee_assignment.fee.name} - {fee_assignment.unit.identifier}",
+            related_user=fee_assignment.unit.owner if hasattr(fee_assignment.unit, 'owner') else None,
+            related_payment_id=payment.id,
+            metadata={
+                'receipt_number': receipt.receipt_number,
+                'estate_name': fee_assignment.fee.estate.name,
+                'unit_identifier': fee_assignment.unit.identifier,
+                'fee_name': fee_assignment.fee.name,
+                'amount': str(payment.amount),
+                'payment_date': payment.payment_date.strftime('%B %d, %Y'),
+                'payment_method': payment.payment_method,
+            }
+        )
+        # Note: PDF generation happens automatically via post_save signal in documents/tasks.py
     
     return payment
 
