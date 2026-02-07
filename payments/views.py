@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.http import FileResponse
 
 from .models import Fee, FeeAssignment, Payment, Receipt
 from .serializers import (
@@ -31,6 +32,9 @@ from .permissions import (
 )
 from .filters import FeeFilter, FeeAssignmentFilter, PaymentFilter
 from . import services
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FeeViewSet(viewsets.ModelViewSet):
@@ -258,6 +262,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return None
 
 
+
+
 class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for viewing receipts.
@@ -292,15 +298,86 @@ class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
         """
         Download receipt as PDF.
         
-        This is a placeholder - implement PDF generation as needed.
+        Fetches the PDF from the documents app and serves it.
         """
         receipt = self.get_object()
         
-        return Response({
-            'message': 'PDF generation not yet implemented',
-            'receipt_number': receipt.receipt_number,
-            'receipt_id': str(receipt.id)
-        })
+        try:
+            # Import here to avoid circular imports
+            from documents.models import Document, DocumentType, DocumentStatus
+            
+            # Find the document for this receipt's payment
+            document = Document.objects.filter(
+                document_type=DocumentType.PAYMENT_RECEIPT,
+                related_payment_id=receipt.payment.id,
+                is_deleted=False,
+            ).first()
+            
+            if not document:
+                logger.warning(f"No document found for receipt {receipt.id}, payment {receipt.payment.id}")
+                return Response(
+                    {
+                        'error': 'Receipt PDF not found',
+                        'detail': 'The PDF document has not been generated yet. Please try again in a moment.'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if document is ready
+            if document.status != DocumentStatus.COMPLETED:
+                logger.warning(f"Document {document.id} not ready, status={document.status}")
+                return Response(
+                    {
+                        'error': 'Receipt PDF not ready',
+                        'detail': f'The PDF is currently being generated. Status: {document.get_status_display()}',
+                        'status': document.status
+                    },
+                    status=status.HTTP_202_ACCEPTED  # Accepted but not ready
+                )
+            
+            if not document.file:
+                logger.error(f"Document {document.id} marked as completed but has no file")
+                return Response(
+                    {
+                        'error': 'Receipt PDF file missing',
+                        'detail': 'The PDF file is not available. Please contact support.'
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Serve the PDF file
+            try:
+                response = FileResponse(
+                    document.file.open('rb'),
+                    content_type='application/pdf'
+                )
+                
+                # Set download filename
+                filename = f"receipt_{receipt.receipt_number}.pdf"
+                response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                
+                logger.info(f"Receipt PDF downloaded: {receipt.id} by user {request.user.id}")
+                return response
+                
+            except Exception as file_error:
+                logger.error(f"Error opening document file {document.id}: {file_error}")
+                return Response(
+                    {
+                        'error': 'Failed to open PDF file',
+                        'detail': str(file_error)
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error downloading receipt {receipt.id}: {e}")
+            return Response(
+                {
+                    'error': 'Download failed',
+                    'detail': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def _get_user_estate(self, user):
         """Get the estate a user belongs to."""

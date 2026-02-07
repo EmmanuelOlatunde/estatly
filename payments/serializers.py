@@ -141,45 +141,105 @@ class FeeCreateSerializer(serializers.ModelSerializer):
         
         return attrs
 
+
 class FeeAssignmentSerializer(serializers.ModelSerializer):
-    """Serializer for reading FeeAssignment data."""
+    """Serializer for fee assignments with receipt and PDF document information."""
     
-    
-    fee = serializers.PrimaryKeyRelatedField(read_only=True)
-    unit = serializers.PrimaryKeyRelatedField(read_only=True)
-    fee_name = serializers.CharField(source='fee.name', read_only=True)
-    fee_amount = serializers.DecimalField(
-        source='fee.amount',
-        max_digits=12,
-        decimal_places=2,
-        read_only=True
-    )
-    fee_due_date = serializers.DateField(source='fee.due_date', read_only=True)
     unit_identifier = serializers.CharField(source='unit.identifier', read_only=True)
-    unit_address = serializers.CharField(source='unit.address', read_only=True)
-    has_payment = serializers.SerializerMethodField()
+    receipt_id = serializers.SerializerMethodField()
+    receipt_number = serializers.SerializerMethodField()
+    pdf_status = serializers.SerializerMethodField()  # NEW: PDF generation status
+    pdf_document_id = serializers.SerializerMethodField()  # NEW: Document ID for direct access
     
     class Meta:
         model = FeeAssignment
         fields = [
             'id',
             'fee',
-            'fee_name',
-            'fee_amount',
-            'fee_due_date',
             'unit',
             'unit_identifier',
-            'unit_address',
             'status',
-            'has_payment',
             'created_at',
             'updated_at',
+            'receipt_id',
+            'receipt_number',
+            'pdf_status',  # NEW
+            'pdf_document_id',  # NEW
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_has_payment(self, obj):
-        """Check if this assignment has an associated payment."""
-        return hasattr(obj, 'payment')
+    def get_receipt_id(self, obj):
+        """Get receipt ID if payment exists and has a receipt."""
+        try:
+            if hasattr(obj, 'payment') and hasattr(obj.payment, 'receipt'):
+                return str(obj.payment.receipt.id)
+        except (Payment.DoesNotExist, Receipt.DoesNotExist):
+            pass
+        return None
+    
+    def get_receipt_number(self, obj):
+        """Get receipt number if payment exists and has a receipt."""
+        try:
+            if hasattr(obj, 'payment') and hasattr(obj.payment, 'receipt'):
+                return obj.payment.receipt.receipt_number
+        except (Payment.DoesNotExist, Receipt.DoesNotExist):
+            pass
+        return None
+    
+    def get_pdf_status(self, obj):
+        """
+        Get PDF document generation status.
+        
+        Returns:
+            - 'pending': PDF is being generated
+            - 'completed': PDF is ready for download
+            - 'failed': PDF generation failed
+            - 'not_found': No PDF document exists
+            - None: No payment/receipt exists
+        """
+        try:
+            if not hasattr(obj, 'payment'):
+                return None
+            
+            from documents.models import Document, DocumentType
+            
+            document = Document.objects.filter(
+                document_type=DocumentType.PAYMENT_RECEIPT,
+                related_payment_id=obj.payment.id,
+                is_deleted=False,
+            ).first()
+            
+            if not document:
+                return 'not_found'
+            
+            return document.status
+            
+        except (Payment.DoesNotExist, Exception):
+            return None
+    
+    def get_pdf_document_id(self, obj):
+        """
+        Get PDF document ID for direct download access.
+        
+        Returns document ID if available, None otherwise.
+        """
+        try:
+            if not hasattr(obj, 'payment'):
+                return None
+            
+            from documents.models import Document, DocumentType, DocumentStatus
+            
+            document = Document.objects.filter(
+                document_type=DocumentType.PAYMENT_RECEIPT,
+                related_payment_id=obj.payment.id,
+                is_deleted=False,
+                status=DocumentStatus.COMPLETED,
+            ).first()
+            
+            return str(document.id) if document else None
+            
+        except (Payment.DoesNotExist, Exception):
+            return None
 
 class PaymentSerializer(serializers.ModelSerializer):
     """Serializer for reading Payment data."""
