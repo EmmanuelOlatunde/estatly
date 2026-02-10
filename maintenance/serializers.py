@@ -278,7 +278,6 @@ class MaintenanceTicketUpdateSerializer(serializers.ModelSerializer):
         
         return super().update(instance, validated_data)
 
-
 class MaintenanceTicketListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for listing maintenance tickets.
@@ -298,6 +297,7 @@ class MaintenanceTicketListSerializer(serializers.ModelSerializer):
         source='estate.name',
         read_only=True
     )
+    identifier = serializers.SerializerMethodField()
     
     class Meta:
         model = MaintenanceTicket
@@ -309,7 +309,15 @@ class MaintenanceTicketListSerializer(serializers.ModelSerializer):
             'status',
             'status_display',
             'estate_name',
+            'unit',
+            'identifier',
             'created_at',
             'updated_at',
         ]
         read_only_fields = fields
+    
+    def get_identifier(self, obj: MaintenanceTicket) -> str | None:
+        """Get the name/number of the associated unit if exists."""
+        if obj.unit:
+            return getattr(obj.unit, 'unit_number', str(obj.unit))
+        return None

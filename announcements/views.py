@@ -12,15 +12,13 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.filters import  OrderingFilter
 from django.http import HttpResponse
-from django.template.loader import render_to_string
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from .filters import AnnouncementFilter 
 from django.db.models import Q
 
-from maintenance.models import MaintenanceTicket
 
 from .models import Announcement
 from .serializers import (
@@ -50,7 +48,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     - print: Get a printable version of an announcement
     """
     
-    permission_classes = [IsAuthenticated, IsManagerOrReadOnly, IsOwnerOrReadOnly, IsActiveUser]
+    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly, IsActiveUser]
     filter_backends = [DjangoFilterBackend,  OrderingFilter]
     filterset_class = AnnouncementFilter
     # search_fields = ['title', 'message']
