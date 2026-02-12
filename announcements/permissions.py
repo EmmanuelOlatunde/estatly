@@ -59,9 +59,11 @@ class IsManagerOrReadOnly(permissions.BasePermission):
         if user.is_staff or user.is_superuser:
             return True
         
-        # Check for manager role if role system exists
+        # Check for manager role using the User.Role choices
         if hasattr(user, 'role'):
-            return user.role in ['MANAGER', 'ADMIN']
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            return user.role in [User.Role.SUPER_ADMIN, User.Role.ESTATE_MANAGER]
         
         # Check for groups
         if hasattr(user, 'groups'):
@@ -164,9 +166,11 @@ class IsManager(permissions.BasePermission):
         if user.is_staff or user.is_superuser:
             return True
         
-        # Check for manager role if role system exists
+        # Check for manager role using the User.Role choices
         if hasattr(user, 'role'):
-            return user.role in ['MANAGER', 'ADMIN']
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            return user.role in [User.Role.SUPER_ADMIN, User.Role.ESTATE_MANAGER]
         
         # Check for groups
         if hasattr(user, 'groups'):

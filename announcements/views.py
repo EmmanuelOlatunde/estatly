@@ -1,9 +1,9 @@
-# announcements/views.py
+# announcements/views_with_pdf.py
 
 """
-API views for announcements app.
+Enhanced API views for announcements app with PDF support.
 
-Provides RESTful endpoints for announcement operations.
+This extends the original views with PDF generation and download capabilities.
 """
 
 import logging
@@ -12,13 +12,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import  OrderingFilter
-from django.http import HttpResponse
+from rest_framework.filters import OrderingFilter
+from django.http import HttpResponse, FileResponse
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from .filters import AnnouncementFilter 
 from django.db.models import Q
-
 
 from .models import Announcement
 from .serializers import (
@@ -27,35 +25,51 @@ from .serializers import (
     AnnouncementUpdateSerializer,
 )
 from .permissions import IsManagerOrReadOnly, IsOwnerOrReadOnly, IsActiveUser
+from .filters import AnnouncementFilter
 from . import services
+from .utils import (
+    get_announcement_pdf,
+    regenerate_announcement_pdf,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class AnnouncementViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing announcements.
+    ViewSet for managing announcements with PDF support.
     
     Provides CRUD operations for announcements:
     - list: Get all announcements visible to the user
     - retrieve: Get a specific announcement
-    - create: Create a new announcement (managers only)
+    - create: Create a new announcement (managers only, auto-generates PDF)
     - update: Update an announcement (owner only)
     - partial_update: Partially update an announcement (owner only)
     - destroy: Delete an announcement (owner only)
     
     Additional actions:
-    - print: Get a printable version of an announcement
+    - print: Get a printable HTML version of an announcement
+    - download_pdf: Download the generated PDF for an announcement
+    - regenerate_pdf: Regenerate the PDF for an announcement
+    - pdf_status: Check PDF generation status
     """
     
-    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly, IsActiveUser]
-    filter_backends = [DjangoFilterBackend,  OrderingFilter]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_class = AnnouncementFilter
-    # search_fields = ['title', 'message']
     ordering_fields = ['created_at', 'updated_at', 'title']
     ordering = ['-created_at']
 
-
+    def get_permissions(self):
+        """Apply different permissions based on action."""
+        if self.action == 'create':
+            permission_classes = [IsAuthenticated, IsManagerOrReadOnly, IsActiveUser]
+        elif self.action in ['update', 'partial_update', 'destroy', 'regenerate_pdf']:
+            permission_classes = [IsAuthenticated, IsOwnerOrReadOnly, IsActiveUser]
+        else:
+            permission_classes = [IsAuthenticated, IsActiveUser]
+        
+        return [permission() for permission in permission_classes]
+    
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Announcement.objects.none()
@@ -63,39 +77,33 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = Announcement.objects.all()
 
-        # 🔑 Actions that MUST see the object
+        # Actions that MUST see the object
         if self.action in [
             'update',
             'partial_update',
             'destroy',
             'print_announcement',
+            'download_pdf',
+            'regenerate_pdf',
+            'pdf_status',
         ]:
             return queryset
 
-        # 🔑 Retrieve logic
+        # Retrieve logic
         if self.action == 'retrieve':
             return queryset.filter(
                 Q(is_active=True) | Q(created_by=user)
             )
 
-    #    # LIST behavior
-    #     if user.is_estate_manager:
-    #         # Managers see ALL announcements (active + inactive)
-    #         return queryset
-
-        # # Regular users see only active announcements
-        # return queryset.filter(is_active=True)
-        # 📃 LIST behavior (query-aware)
+        # LIST behavior (query-aware)
         include_inactive = self.request.query_params.get('include_inactive')
         is_active_param = self.request.query_params.get('is_active')
 
-        # Explicit include inactive → start with all
         if include_inactive == 'true':
             qs = queryset
         else:
             qs = queryset.filter(is_active=True)
 
-        # Explicit is_active filter overrides
         if is_active_param == 'true':
             qs = qs.filter(is_active=True)
         elif is_active_param == 'false':
@@ -103,16 +111,8 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
 
         return qs
 
-
-
-
     def get_serializer_class(self):
-        """
-        Return appropriate serializer class based on action.
-        
-        Returns:
-            Serializer class for the current action
-        """
+        """Return appropriate serializer class based on action."""
         if self.action == 'create':
             return AnnouncementCreateSerializer
         elif self.action in ['update', 'partial_update']:
@@ -143,7 +143,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         return super().retrieve(request, *args, **kwargs)
     
     @swagger_auto_schema(
-        operation_description="Create a new announcement (managers only)",
+        operation_description="Create a new announcement (managers only). PDF generation is triggered automatically.",
         request_body=AnnouncementCreateSerializer,
         responses={
             201: AnnouncementSerializer(),
@@ -151,8 +151,6 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             403: "Permission denied"
         }
     )
-
-    
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -173,7 +171,6 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
             headers=headers
         )
-
     
     @swagger_auto_schema(
         operation_description="Update an announcement (owner only)",
@@ -225,12 +222,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
     
     def perform_create(self, serializer):
-        """
-        Create announcement using service layer.
-        
-        Args:
-            serializer: Validated serializer instance
-        """
+        """Create announcement using service layer."""
         try:
             announcement = services.create_announcement(
                 created_by=self.request.user,
@@ -245,12 +237,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             raise
     
     def perform_update(self, serializer):
-        """
-        Update announcement using service layer.
-        
-        Args:
-            serializer: Validated serializer instance
-        """
+        """Update announcement using service layer."""
         try:
             announcement = services.update_announcement(
                 announcement=serializer.instance,
@@ -266,12 +253,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             raise
     
     def perform_destroy(self, instance):
-        """
-        Delete announcement using service layer.
-        
-        Args:
-            instance: Announcement instance to delete
-        """
+        """Delete announcement using service layer."""
         try:
             services.delete_announcement(
                 announcement=instance,
@@ -286,7 +268,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     
     @swagger_auto_schema(
         method='get',
-        operation_description="Get a printable version of an announcement",
+        operation_description="Get a printable HTML version of an announcement",
         responses={
             200: openapi.Response(
                 description="HTML content for printing",
@@ -298,16 +280,9 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='print')
     def print_announcement(self, request, pk=None):
         """
-        Get a printable version of an announcement.
+        Get a printable HTML version of an announcement.
         
         Returns an HTML page optimized for printing.
-        
-        Args:
-            request: HTTP request
-            pk: Announcement primary key
-        
-        Returns:
-            HttpResponse with HTML content
         """
         logger.info(
             f"User {request.user.id} requesting print version of announcement {pk}"
@@ -315,7 +290,6 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         
         announcement = self.get_object()
         
-        # Simple HTML template for printing
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -377,6 +351,173 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         """
         
         return HttpResponse(html_content, content_type='text/html; charset=utf-8')
-
-
+    
+    @swagger_auto_schema(
+        method='get',
+        operation_description="Download the PDF version of an announcement",
+        responses={
+            200: openapi.Response(
+                description="PDF file",
+                schema=openapi.Schema(type=openapi.TYPE_FILE)
+            ),
+            404: "PDF not found or not ready",
+            500: "PDF generation failed"
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='download-pdf')
+    def download_pdf(self, request, pk=None):
+        """
+        Download the generated PDF for an announcement.
         
+        Returns the PDF file if generation is complete.
+        """
+        logger.info(
+            f"User {request.user.id} requesting PDF download for announcement {pk}"
+        )
+        
+        announcement = self.get_object()
+        document = get_announcement_pdf(announcement)
+        
+        if not document:
+            logger.warning(
+                f"PDF not ready for announcement {pk}"
+            )
+            return Response(
+                {
+                    'error': 'PDF is not ready yet. Check status endpoint.',
+                    'status': 'not_ready'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            response = FileResponse(
+                document.file.open('rb'),
+                content_type='application/pdf'
+            )
+            filename = f"announcement_{announcement.id}.pdf"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            logger.info(
+                f"PDF downloaded for announcement {pk} by user {request.user.id}"
+            )
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error downloading PDF for announcement {pk}: {e}")
+            return Response(
+                {'error': 'Failed to download PDF'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @swagger_auto_schema(
+        method='post',
+        operation_description="Regenerate the PDF for an announcement",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'force': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Force regeneration even if PDF exists'
+                )
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="PDF regeneration initiated",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'document_id': openapi.Schema(type=openapi.TYPE_STRING),
+                        'status': openapi.Schema(type=openapi.TYPE_STRING)
+                    }
+                )
+            ),
+            400: "Bad request",
+            403: "Permission denied"
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='regenerate-pdf')
+    def regenerate_pdf(self, request, pk=None):
+        """
+        Regenerate the PDF for an announcement.
+        
+        Useful if PDF generation failed or content was updated.
+        """
+        logger.info(
+            f"User {request.user.id} requesting PDF regeneration for announcement {pk}"
+        )
+        
+        announcement = self.get_object()
+        force = request.data.get('force', False)
+        
+        document = regenerate_announcement_pdf(announcement, force=force)
+        
+        if not document:
+            return Response(
+                {'error': 'Failed to regenerate PDF'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return Response({
+            'message': 'PDF regeneration initiated',
+            'document_id': str(document.id),
+            'status': document.status
+        })
+    
+    @swagger_auto_schema(
+        method='get',
+        operation_description="Check PDF generation status for an announcement",
+        responses={
+            200: openapi.Response(
+                description="PDF status information",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'status': openapi.Schema(type=openapi.TYPE_STRING),
+                        'document_id': openapi.Schema(type=openapi.TYPE_STRING),
+                        'file_size': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'generated_at': openapi.Schema(type=openapi.TYPE_STRING),
+                        'error_message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                )
+            ),
+            404: "Document not found"
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='pdf-status')
+    def pdf_status(self, request, pk=None):
+        """
+        Check the status of PDF generation for an announcement.
+        
+        Returns information about the PDF document including generation status.
+        """
+        logger.info(
+            f"User {request.user.id} checking PDF status for announcement {pk}"
+        )
+        
+        announcement = self.get_object()
+        
+        from documents import services as doc_services
+        document = doc_services.get_announcement_document(
+            announcement_id=announcement.id
+        )
+        
+        if not document:
+            return Response(
+                {
+                    'status': 'not_found',
+                    'message': 'No PDF document found for this announcement'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response({
+            'status': document.status,
+            'document_id': str(document.id),
+            'file_size': document.file_size,
+            'generated_at': document.generated_at,
+            'error_message': document.error_message if document.error_message else None,
+            'is_ready': document.status == 'completed' and bool(document.file),
+        })
