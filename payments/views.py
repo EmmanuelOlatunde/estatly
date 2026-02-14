@@ -30,7 +30,7 @@ from .permissions import (
     CanViewReceipt,
     IsEstateManager,
 )
-from .filters import FeeFilter, FeeAssignmentFilter, PaymentFilter
+from .filters import FeeFilter, FeeAssignmentFilter, PaymentFilter, ReceiptFilter
 from . import services
 import logging
 
@@ -276,6 +276,7 @@ class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ReceiptSerializer
     permission_classes = [IsAuthenticated, CanViewReceipt, EstateAccessPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ReceiptFilter  # ✅ Added ReceiptFilter
     search_fields = ['receipt_number', 'fee_name', 'unit_identifier']
     ordering_fields = ['issued_at', 'payment_date']
     ordering = ['-issued_at']

@@ -3,11 +3,11 @@
 """
 Filter classes for the payments app.
 
-Provides filtering capabilities for fees, payments, and assignments.
+Provides filtering capabilities for fees, payments, assignments, and receipts.
 """
 
 import django_filters
-from .models import Fee, FeeAssignment, Payment
+from .models import Fee, FeeAssignment, Payment, Receipt
 
 
 class FeeFilter(django_filters.FilterSet):
@@ -61,4 +61,30 @@ class PaymentFilter(django_filters.FilterSet):
             'payment_date_from',
             'payment_date_to',
             'recorded_by',
+        ]
+
+
+class ReceiptFilter(django_filters.FilterSet):
+    """Filter for Receipt model."""
+    
+    payment_method = django_filters.CharFilter(field_name='payment_method', lookup_expr='iexact')
+    payment_date_from = django_filters.DateFilter(field_name='payment_date', lookup_expr='gte')
+    payment_date_to = django_filters.DateFilter(field_name='payment_date', lookup_expr='lte')
+    estate_name = django_filters.CharFilter(field_name='estate_name', lookup_expr='icontains')
+    unit_identifier = django_filters.CharFilter(field_name='unit_identifier', lookup_expr='icontains')
+    fee_name = django_filters.CharFilter(field_name='fee_name', lookup_expr='icontains')
+    amount_min = django_filters.NumberFilter(field_name='amount', lookup_expr='gte')
+    amount_max = django_filters.NumberFilter(field_name='amount', lookup_expr='lte')
+    
+    class Meta:
+        model = Receipt
+        fields = [
+            'payment_method',
+            'payment_date_from',
+            'payment_date_to',
+            'estate_name',
+            'unit_identifier',
+            'fee_name',
+            'amount_min',
+            'amount_max',
         ]

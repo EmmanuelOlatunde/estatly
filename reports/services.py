@@ -54,18 +54,16 @@ def get_fee_payment_status(
             raise ValueError("You don't have permission to view this fee")
 
     # ------------------------------------------------------------------
-    # 3. Total liable units (OCCUPIED units only)
+    # 3. Total liable units (units with FeeAssignments for this fee)
     # ------------------------------------------------------------------
-    total_units = Unit.objects.filter(
-        estate=fee.estate,
-        is_occupied=True
-    ).count()
+    # Only count units that have been explicitly assigned this fee
+    all_assignments = FeeAssignment.objects.filter(fee=fee)
+    total_units = all_assignments.count()
 
     # ------------------------------------------------------------------
     # 4. Paid units (via FeeAssignment)
     # ------------------------------------------------------------------
-    paid_assignments = FeeAssignment.objects.filter(
-        fee=fee,
+    paid_assignments = all_assignments.filter(
         status=FeeAssignment.PaymentStatus.PAID
     )
 
@@ -93,19 +91,17 @@ def get_fee_payment_status(
         ).quantize(Decimal('0.01'))
 
     # ------------------------------------------------------------------
-    # 6. Unpaid units (KEY FIX)
+    # 6. Unpaid units (units with unpaid FeeAssignments)
     # ------------------------------------------------------------------
-    paid_unit_ids = paid_assignments.values_list('unit_id', flat=True)
-
-    unpaid_units_qs = Unit.objects.filter(
-        estate=fee.estate,
-        is_occupied=True
-    ).exclude(id__in=paid_unit_ids)
+    unpaid_assignments = all_assignments.exclude(
+        status=FeeAssignment.PaymentStatus.PAID
+    ).select_related('unit', 'unit__owner', 'unit__estate')
 
     today = date.today()
     unpaid_units = []
 
-    for unit in unpaid_units_qs:
+    for assignment in unpaid_assignments:
+        unit = assignment.unit
         days_overdue = 0
         if fee.due_date and today > fee.due_date:
             days_overdue = (today - fee.due_date).days
@@ -204,19 +200,16 @@ def get_overall_payment_summary(
     total_collected_all = Decimal('0.00')
     
     for fee in fees:
-        # Get occupied units count for this estate
-        occupied_units_count = Unit.objects.filter(
-            estate=fee.estate,
-            is_occupied=True
-        ).count()
+        # FIXED: Count units based on FeeAssignments, not all occupied units
+        # This ensures only units that were assigned the fee are counted
+        total_assignments = FeeAssignment.objects.filter(fee=fee).count()
         
-        # Expected amount
-        expected = fee.amount * occupied_units_count
+        # Expected amount based on actual assignments
+        expected = fee.amount * total_assignments
         
-        # FIXED: Query through fee_assignment instead of direct fee relationship
         # Collected amount from payments for this fee
         collected = Payment.objects.filter(
-            fee_assignment__fee=fee,  # Changed from fee=fee
+            fee_assignment__fee=fee,
             fee_assignment__status=FeeAssignment.PaymentStatus.PAID
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
         
@@ -241,9 +234,9 @@ def get_overall_payment_summary(
             'total_collected': str(collected),
             'total_pending': str(pending),
             'payment_rate': str(rate),
-            'total_units': occupied_units_count,
+            'total_units': total_assignments,
             'paid_units': paid_count,
-            'unpaid_units_count': occupied_units_count - paid_count
+            'unpaid_units_count': total_assignments - paid_count
         })
         
         total_expected_all += expected
