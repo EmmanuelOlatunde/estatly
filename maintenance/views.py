@@ -12,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -24,9 +25,9 @@ from .serializers import (
     MaintenanceTicketListSerializer,
 )
 from .permissions import (
-    # IsEstateManagerOrReadOnly,
     IsTicketCreatorOrAdmin,
     CanCreateTicket,
+    CanAccessEstate,
 )
 from .filters import MaintenanceTicketFilter
 from . import services
@@ -34,11 +35,21 @@ from . import services
 logger = logging.getLogger(__name__)
 
 
+class MaintenanceTicketPagination(PageNumberPagination):
+    """
+    Custom pagination class for maintenance tickets.
+    """
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
 class MaintenanceTicketViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing maintenance tickets.
     
     Provides CRUD operations and custom actions for maintenance ticket management.
+    Users can only access tickets from estates they manage.
     
     list: Get a list of maintenance tickets with filtering and search
     retrieve: Get details of a specific maintenance ticket
@@ -55,11 +66,11 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
     
     queryset = MaintenanceTicket.objects.all()
     permission_classes = [IsAuthenticated, IsTicketCreatorOrAdmin]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MaintenanceTicketFilter
-    search_fields = ['title', 'description']
     ordering_fields = ['created_at', 'updated_at', 'status', 'category']
     ordering = ['-created_at']
+    pagination_class = MaintenanceTicketPagination
     
     def get_serializer_class(self):
         """
@@ -68,8 +79,6 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
         Returns:
             Serializer class for the current action
         """
-
-            
         if self.action == 'list':
             return MaintenanceTicketListSerializer
         elif self.action == 'create':
@@ -87,11 +96,27 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
         """
         if self.action == 'create':
             return [IsAuthenticated(), CanCreateTicket()]
-        elif self.action in ['list', 'retrieve']:
+        elif self.action == 'statistics':
+            return [IsAuthenticated(), CanAccessEstate()]
+        elif self.action == 'list':
+            # List action relies on get_queryset filtering by estate
             return [IsAuthenticated()]
+        elif self.action == 'retrieve':
+            # Retrieve needs object permission to verify estate access
+            return [IsAuthenticated(), IsTicketCreatorOrAdmin()]
+        # For update, partial_update, destroy, resolve, reopen
         return [IsAuthenticated(), IsTicketCreatorOrAdmin()]
         
     def get_queryset(self):
+        """
+        Filter queryset to only show tickets from user's estate.
+        
+        Only superusers can see all tickets.
+        Managers (is_staff) and regular users can only see tickets from their assigned estate.
+        
+        Returns:
+            Filtered QuerySet of MaintenanceTicket instances
+        """
         if getattr(self, 'swagger_fake_view', False):
             return MaintenanceTicket.objects.none()
 
@@ -106,12 +131,25 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
             'estate'
         )
 
-        if not user.is_staff:
-            queryset = queryset.filter(created_by=user)
+        # Only superusers can see all tickets (not is_staff)
+        if user.is_superuser:
+            logger.info(f"Superuser {user.id} accessing all tickets")
+            return queryset
+
+        # Managers (is_staff) and regular users can only see tickets from their estate
+        if not user.estate:
+            logger.warning(
+                f"User {user.id} (is_staff={user.is_staff}) has no estate assigned, returning empty queryset"
+            )
+            return MaintenanceTicket.objects.none()
+
+        queryset = queryset.filter(estate=user.estate)
+        logger.info(
+            f"Filtering tickets for user {user.id} (is_staff={user.is_staff}) "
+            f"to estate {user.estate.id}. Found {queryset.count()} tickets."
+        )
 
         return queryset
-
-
 
     @swagger_auto_schema(
         operation_description="Create a new maintenance ticket",
@@ -121,10 +159,11 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
             400: 'Bad Request - Validation Error'
         }
     )
-
     def create(self, request: Request, *args, **kwargs) -> Response:
         """
         Create a new maintenance ticket.
+        
+        Users can only create tickets for their own estate.
         
         Args:
             request: The incoming request with ticket data
@@ -166,8 +205,6 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-
-
     @swagger_auto_schema(
         operation_description="Update a maintenance ticket",
         request_body=MaintenanceTicketUpdateSerializer,
@@ -177,7 +214,6 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
             404: 'Not Found'
         }
     )
-    
     def update(self, request: Request, *args, **kwargs) -> Response:
         """
         Update an existing maintenance ticket.
@@ -361,13 +397,16 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
                     }
                 }
             ),
-            400: 'Bad Request - Missing estate_id'
+            400: 'Bad Request - Missing estate_id or unauthorized'
         }
     )
-    @action(detail=False, methods=['get'], filter_backends=[],)
+    @action(detail=False, methods=['get'], filter_backends=[])
     def statistics(self, request: Request) -> Response:
         """
         Get statistics for maintenance tickets in an estate.
+        
+        Users can only get statistics for their own estate.
+        Superusers can get statistics for any estate.
         
         Args:
             request: The incoming request with estate_id query parameter
@@ -394,6 +433,3 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
         )
         
         return Response(stats)
-
-
-        

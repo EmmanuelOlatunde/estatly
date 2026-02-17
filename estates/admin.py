@@ -7,6 +7,7 @@ from django import forms
 from django.contrib import admin
 from accounts.models import User
 from .models import Estate
+from django.db import models
 
 
 
@@ -16,10 +17,9 @@ class EstateAdminForm(forms.ModelForm):
     """
 
     manager = forms.ModelChoiceField(
-        queryset=User.objects.filter(role=User.Role.ESTATE_MANAGER),
+        queryset=User.objects.filter(role=User.Role.ESTATE_MANAGER, estate__isnull=True),
         required=False,
-        # estate__isnull=True,
-        help_text="Assign an estate manager to this estate"
+        help_text="Assign an estate manager to this estate (only unassigned managers are shown)"
     )
 
     class Meta:
@@ -35,11 +35,10 @@ class EstateAdmin(admin.ModelAdmin):
     list_display = [
         'name',
         'manager',
-
         'estate_type',
         'approximate_units',
-        'total_units',        # 👈 total units
-        'active_units',       # 👈 active units
+        'total_units',        # total units
+        'active_units',       # active units
         'fee_frequency',
         'is_active',
         'created_at',
@@ -133,29 +132,61 @@ class EstateAdmin(admin.ModelAdmin):
     active_units.short_description = 'Active Units'
 
     def manager(self, obj):
-        try:
-            return obj.user.email
-        except User.DoesNotExist:
-            return "—"
+        """
+        Display the estate manager for this estate.
+        
+        Since User has FK to Estate (with related_name="users"),
+        we access managers through the reverse relation.
+        """
+        # Get the first estate manager assigned to this estate
+        manager = obj.users.filter(role=User.Role.ESTATE_MANAGER).first()
+        
+        if manager:
+            return manager.email
+        return "No manager assigned"
 
     manager.short_description = "Estate Manager"
 
+    def get_form(self, request, obj=None, **kwargs):
+        """
+        Customize the form to show the current manager if editing an existing estate.
+        """
+        form = super().get_form(request, obj, **kwargs)
+        
+        if obj:
+            # Pre-populate the manager field with the current manager
+            current_manager = obj.users.filter(role=User.Role.ESTATE_MANAGER).first()
+            if current_manager:
+                # Update queryset to include current manager even if they're already assigned
+                form.base_fields['manager'].queryset = User.objects.filter(
+                    role=User.Role.ESTATE_MANAGER
+                ).filter(
+                    models.Q(estate__isnull=True) | models.Q(estate=obj)
+                )
+                form.base_fields['manager'].initial = current_manager
+        
+        return form
+
     def save_model(self, request, obj, form, change):
+        """
+        Save the estate and handle manager assignment.
+        """
+        from django.db import models
+        
         super().save_model(request, obj, form, change)
 
         new_manager = form.cleaned_data.get("manager")
 
-        # Remove old manager if exists
-        try:
-            old_manager = obj.user
-        except User.DoesNotExist:
-            old_manager = None
+        # Get current manager (if any)
+        current_manager = obj.users.filter(role=User.Role.ESTATE_MANAGER).first()
 
-        if old_manager and old_manager != new_manager:
-            old_manager.estate = None
-            old_manager.save(update_fields=["estate"])
+        # If there's a current manager and it's different from the new one
+        if current_manager and current_manager != new_manager:
+            # Remove the old manager's assignment
+            current_manager.estate = None
+            current_manager.save(update_fields=["estate"])
 
+        # Assign the new manager
         if new_manager:
             new_manager.estate = obj
             new_manager.save(update_fields=["estate"])
-

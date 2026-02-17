@@ -58,6 +58,9 @@ class EstateViewSet(viewsets.ModelViewSet):
     # Core DRF Overrides
     # -------------------------
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Estate.objects.none()
+        
         user = self.request.user
 
         if user.is_superuser:

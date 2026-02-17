@@ -80,11 +80,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         REGULAR = 'REGULAR', 'Regular'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    estate = models.OneToOneField(
+    estate = models.ForeignKey(
         Estate,
         on_delete=models.CASCADE,
         null=True,
-        blank=True
+        blank=True,
+        related_name="users"
     )
 
 
@@ -155,18 +156,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
         # Always normalize email
         self.email = self.__class__.objects.normalize_email(self.email)
-
-        # Enforce estate-manager invariant
-        if self.role == self.Role.ESTATE_MANAGER and not self.estate:
-            raise ValidationError({
-                "estate": "Estate managers must be assigned to an estate."
-            })
-
-        # (Optional hardening)
-        if self.role != self.Role.ESTATE_MANAGER and self.estate:
-            raise ValidationError({
-                "estate": "Only estate managers can be assigned to an estate."
-            })
 
 
 class PasswordResetToken(models.Model):

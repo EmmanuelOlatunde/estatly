@@ -14,8 +14,22 @@ SECRET_KEY = 'django-insecure-jxoyx864rwgz2^@%!)bu1x&3x+6eav36kllvsveuvae#o4c!n&
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "10.219.150.128",
+    "localhost",
+    "127.0.0.1",
+]
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8081",
+    "http://localhost:8080",
+    "http://10.219.150.128:8080",
 
+]
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://10.219.150.128:8080",
+]
 
 # Application definition
 
@@ -63,12 +77,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:8081",
-    "http://localhost:8080",
-]
-CORS_ALLOW_CREDENTIALS = True
-
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -115,7 +123,10 @@ SIMPLE_JWT = {
 }
 
 
+# settings.py
+
 SWAGGER_SETTINGS = {
+    "DEFAULT_INFO": "estatly.swagger.api_info",  # string path to the openapi.Info object
     'SECURITY_DEFINITIONS': {
         'Bearer': {
             'type': 'apiKey',
@@ -125,16 +136,9 @@ SWAGGER_SETTINGS = {
     },
     'USE_SESSION_AUTH': False,
     'JSON_EDITOR': True,
-    'SUPPORTED_SUBMIT_METHODS': [
-        'get',
-        'post',
-        'put',
-        'delete',
-        'patch'
-    ],
+    'SUPPORTED_SUBMIT_METHODS': ['get', 'post', 'put', 'delete', 'patch'],
 }
 SWAGGER_USE_COMPAT_RENDERERS = False
-
 ROOT_URLCONF = 'estatly.urls'
 
 TEMPLATES = [

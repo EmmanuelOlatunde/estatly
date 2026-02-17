@@ -138,11 +138,13 @@ def update_maintenance_ticket(
                             ticket.resolved_at = timezone.now()
                             logger.info(f"Ticket {ticket.id} marked as resolved")
                     
-                    # Handle status change from resolved to open
+                    # Handle status change from resolved to open (reopening)
                     if field == 'status' and value == MaintenanceTicket.StatusChoices.OPEN:
                         if ticket.status == MaintenanceTicket.StatusChoices.RESOLVED:
                             ticket.resolved_at = None
-                            logger.info(f"Ticket {ticket.id} reopened")
+                            # Update created_at to now so days_open reflects time since reopening
+                            ticket.created_at = timezone.now()
+                            logger.info(f"Ticket {ticket.id} reopened, created_at updated to {ticket.created_at}")
                     
                     # Strip string fields
                     if isinstance(value, str) and field in ['title', 'description']:
@@ -202,6 +204,10 @@ def reopen_maintenance_ticket(
 ) -> MaintenanceTicket:
     """
     Reopen a resolved maintenance ticket.
+    
+    When reopening, the created_at timestamp is updated to the current time
+    so that days_open calculation reflects the time since reopening rather
+    than the original creation date.
     
     Args:
         ticket: The MaintenanceTicket instance to reopen

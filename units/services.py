@@ -4,13 +4,14 @@ Business logic layer for the units app.
 Contains all domain logic for unit management operations.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Tuple, List, Union
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import QuerySet
 from django.core.exceptions import ValidationError
 from estates.models import Estate
 from django.utils import timezone
+import uuid
 
 
 from .models import Unit
@@ -25,8 +26,14 @@ User = get_user_model()
 # =====================================================
 
 def _assert_owner(unit: Unit, user: "AbstractBaseUser", action: str) -> None:
+    """
+    Verify that the user owns the unit.
+    
+    Raises:
+        PermissionError: If user is not the owner
+    """
     if unit.owner_id != user.id:
-        raise ValueError(f'Only the unit owner can {action} this unit.')
+        raise PermissionError(f'Only the unit owner can {action} this unit.')
 
 
 def _validate_identifier(
@@ -35,6 +42,20 @@ def _validate_identifier(
     identifier: Optional[str],
     exclude_unit_id: Optional[int] = None
 ) -> str:
+    """
+    Validate unit identifier uniqueness and format.
+    
+    Args:
+        owner: The owner to check uniqueness for
+        identifier: The identifier to validate
+        exclude_unit_id: Optional unit ID to exclude from uniqueness check
+        
+    Returns:
+        The cleaned identifier
+        
+    Raises:
+        ValueError: If identifier is invalid or not unique
+    """
     if identifier is None:
         raise ValueError('Unit identifier is required.')
 
@@ -55,6 +76,15 @@ def _validate_identifier(
 
 
 def _validate_unit_type(unit_type: str) -> None:
+    """
+    Validate that unit type is valid.
+    
+    Args:
+        unit_type: The unit type to validate
+        
+    Raises:
+        ValueError: If unit type is invalid
+    """
     valid_types = {choice[0] for choice in Unit.UnitType.choices}
     if unit_type not in valid_types:
         raise ValueError(f'Invalid unit type. Must be one of: {sorted(valid_types)}')
@@ -66,15 +96,36 @@ def _validate_occupancy(
     occupant_name: Optional[str],
     occupant_phone: Optional[str]
 ) -> None:
+    """
+    Validate occupancy information consistency.
+    
+    Args:
+        is_occupied: Whether the unit is occupied
+        occupant_name: Occupant's name
+        occupant_phone: Occupant's phone
+        
+    Raises:
+        ValueError: If occupancy information is inconsistent
+    """
     if (occupant_name or occupant_phone) and not is_occupied:
         raise ValueError(
             'Unit must be marked as occupied if occupant info is provided.'
         )
 
-    # if is_occupied and not (occupant_name or occupant_phone):
-    #     raise ValueError(
-    #         'At least occupant name or phone is required when unit is occupied.'
-    #     )
+
+def _validate_estate_ownership(estate: Estate, owner: "AbstractBaseUser") -> None:
+    """
+    Validate that the user owns the estate.
+    
+    Args:
+        estate: The estate to validate
+        owner: The expected owner
+        
+    Raises:
+        ValueError: If user doesn't own the estate
+    """
+    if estate.manager != owner:
+        raise ValueError('You can only add units to estates you own.')
 
 
 # =====================================================
@@ -84,7 +135,7 @@ def _validate_occupancy(
 def create_unit(
     *,
     owner: "AbstractBaseUser",
-    estate: "Estate",           # ADD THIS PARAMETER
+    estate: "Estate",
     identifier: str,
     unit_type: str,
     occupant_name: Optional[str] = None,
@@ -118,7 +169,8 @@ def create_unit(
     
     if not estate:
         raise ValueError('Estate is required.')
-
+    
+    _validate_estate_ownership(estate, owner)
     identifier = _validate_identifier(owner=owner, identifier=identifier)
     _validate_unit_type(unit_type)
     _validate_occupancy(
@@ -131,7 +183,7 @@ def create_unit(
         with transaction.atomic():
             return Unit.objects.create(
                 owner=owner,
-                estate=estate,      # ADD THIS LINE
+                estate=estate,
                 identifier=identifier,
                 unit_type=unit_type,
                 occupant_name=occupant_name,
@@ -152,6 +204,18 @@ def update_unit(
 ) -> Unit:
     """
     Update an existing unit.
+    
+    Args:
+        unit: The unit to update
+        user: The user performing the update
+        **update_data: Fields to update
+        
+    Returns:
+        The updated Unit instance
+        
+    Raises:
+        PermissionError: If user is not the owner
+        ValueError: If validation fails
     """
     _assert_owner(unit, user, 'update')
 
@@ -201,6 +265,13 @@ def delete_unit(
 ) -> None:
     """
     Hard delete a unit.
+    
+    Args:
+        unit: The unit to delete
+        user: The user performing the deletion
+        
+    Raises:
+        PermissionError: If user is not the owner
     """
     _assert_owner(unit, user, 'delete')
 
@@ -214,7 +285,17 @@ def deactivate_unit(
     user: "AbstractBaseUser"
 ) -> Unit:
     """
-    Deactivate a unit.
+    Deactivate a unit (soft delete).
+    
+    Args:
+        unit: The unit to deactivate
+        user: The user performing the deactivation
+        
+    Returns:
+        The deactivated Unit instance
+        
+    Raises:
+        PermissionError: If user is not the owner
     """
     _assert_owner(unit, user, 'deactivate')
 
@@ -229,7 +310,17 @@ def activate_unit(
     user: "AbstractBaseUser"
 ) -> Unit:
     """
-    Activate a unit.
+    Activate a previously deactivated unit.
+    
+    Args:
+        unit: The unit to activate
+        user: The user performing the activation
+        
+    Returns:
+        The activated Unit instance
+        
+    Raises:
+        PermissionError: If user is not the owner
     """
     _assert_owner(unit, user, 'activate')
 
@@ -248,7 +339,21 @@ def update_occupancy(
     occupant_phone: Optional[str] = None
 ) -> Unit:
     """
-    Update unit occupancy.
+    Update unit occupancy status and information.
+    
+    Args:
+        unit: The unit to update
+        user: The user performing the update
+        is_occupied: Whether the unit is occupied
+        occupant_name: Occupant's name (optional)
+        occupant_phone: Occupant's phone (optional)
+        
+    Returns:
+        The updated Unit instance
+        
+    Raises:
+        PermissionError: If user is not the owner
+        ValueError: If validation fails
     """
     _assert_owner(unit, user, 'update occupancy')
 
@@ -276,6 +381,65 @@ def update_occupancy(
         return unit
 
 
+def bulk_update_units(
+    *,
+    user: "AbstractBaseUser",
+    unit_ids: List[Union[str, uuid.UUID]],
+    **update_fields
+) -> Tuple[int, List[str]]:
+    """
+    Bulk update multiple units owned by the user.
+    
+    Args:
+        user: The user performing the updates
+        unit_ids: List of unit IDs (can be strings or UUIDs)
+        **update_fields: Fields to update (is_active, is_occupied, etc.)
+        
+    Returns:
+        Tuple of (number of units updated, list of updated unit IDs as strings)
+        
+    Raises:
+        ValueError: If no units found or validation fails
+    """
+    if not unit_ids:
+        raise ValueError('No unit IDs provided.')
+    
+    # Convert string IDs to UUIDs if necessary
+    converted_ids = []
+    for uid in unit_ids:
+        if isinstance(uid, str):
+            try:
+                converted_ids.append(uuid.UUID(uid))
+            except ValueError:
+                raise ValueError(f'Invalid UUID format: {uid}')
+        else:
+            converted_ids.append(uid)
+    
+    # Get units owned by user
+    units = Unit.objects.filter(
+        id__in=converted_ids,
+        owner=user
+    )
+    
+    if not units.exists():
+        raise ValueError('No units found matching the provided IDs.')
+    
+    # Validate update fields
+    allowed_fields = {'is_active', 'is_occupied', 'occupant_name', 'occupant_phone'}
+    invalid_fields = set(update_fields.keys()) - allowed_fields
+    if invalid_fields:
+        raise ValueError(f'Invalid fields: {invalid_fields}')
+    
+    # Perform bulk update
+    with transaction.atomic():
+        update_fields['updated_at'] = timezone.now()
+        updated_count = units.update(**update_fields)
+        # Convert UUIDs to strings for JSON serialization
+        updated_ids = [str(uid) for uid in units.values_list('id', flat=True)]
+    
+    return updated_count, updated_ids
+
+
 # =====================================================
 # Query helpers
 # =====================================================
@@ -285,6 +449,16 @@ def get_user_units(
     user: "AbstractBaseUser",
     include_inactive: bool = False
 ) -> QuerySet[Unit]:
+    """
+    Get all units owned by a user.
+    
+    Args:
+        user: The user to get units for
+        include_inactive: Whether to include inactive units
+        
+    Returns:
+        QuerySet of Unit instances
+    """
     queryset = Unit.objects.filter(owner=user)
 
     if not include_inactive:
@@ -297,6 +471,15 @@ def get_occupied_units(
     *,
     user: "AbstractBaseUser"
 ) -> QuerySet[Unit]:
+    """
+    Get all occupied units owned by a user.
+    
+    Args:
+        user: The user to get units for
+        
+    Returns:
+        QuerySet of occupied Unit instances
+    """
     return Unit.objects.filter(
         owner=user,
         is_occupied=True,
@@ -308,6 +491,15 @@ def get_vacant_units(
     *,
     user: "AbstractBaseUser"
 ) -> QuerySet[Unit]:
+    """
+    Get all vacant (unoccupied) units owned by a user.
+    
+    Args:
+        user: The user to get units for
+        
+    Returns:
+        QuerySet of vacant Unit instances
+    """
     return Unit.objects.filter(
         owner=user,
         is_occupied=False,
@@ -320,14 +512,77 @@ def search_units(
     user: "AbstractBaseUser",
     search_term: str
 ) -> QuerySet[Unit]:
+    """
+    Search units owned by a user.
+    
+    Args:
+        user: The user to search units for
+        search_term: The term to search for
+        
+    Returns:
+        QuerySet of matching Unit instances
+    """
     from django.db.models import Q
 
     return Unit.objects.filter(
-        Q(owner=user),
-        Q(is_active=True),
-        Q(
-            identifier__icontains=search_term
-            | Q(occupant_name__icontains=search_term)
-            | Q(description__icontains=search_term)
-        )
+        owner=user,
+        is_active=True,
+    ).filter(
+        Q(identifier__icontains=search_term) |
+        Q(occupant_name__icontains=search_term) |
+        Q(description__icontains=search_term)
     )
+
+
+def get_units_by_estate(
+    *,
+    user: "AbstractBaseUser",
+    estate: Estate
+) -> QuerySet[Unit]:
+    """
+    Get all units in a specific estate owned by a user.
+    
+    Args:
+        user: The user to get units for
+        estate: The estate to filter by
+        
+    Returns:
+        QuerySet of Unit instances
+    """
+    return Unit.objects.filter(
+        owner=user,
+        estate=estate,
+        is_active=True,
+    )
+
+
+def get_unit_statistics(
+    *,
+    user: "AbstractBaseUser"
+) -> dict:
+    """
+    Get statistics about a user's units.
+    
+    Args:
+        user: The user to get statistics for
+        
+    Returns:
+        Dictionary containing unit statistics
+    """
+    from django.db.models import Count, Q
+    
+    units = Unit.objects.filter(owner=user, is_active=True)
+    
+    stats = units.aggregate(
+        total_units=Count('id'),
+        occupied_units=Count('id', filter=Q(is_occupied=True)),
+        vacant_units=Count('id', filter=Q(is_occupied=False)),
+    )
+    
+    # Calculate occupancy rate
+    if stats['total_units'] > 0:
+        stats['occupancy_rate'] = (stats['occupied_units'] / stats['total_units']) * 100
+    else:
+        stats['occupancy_rate'] = 0.0
+    
+    return stats

@@ -4,6 +4,7 @@
 Enhanced API views for announcements app with PDF support.
 
 This extends the original views with PDF generation and download capabilities.
+SECURITY: Managers can only access announcements from their assigned estate.
 """
 
 import logging
@@ -40,7 +41,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     ViewSet for managing announcements with PDF support.
     
     Provides CRUD operations for announcements:
-    - list: Get all announcements visible to the user
+    - list: Get all announcements visible to the user (filtered by estate for managers)
     - retrieve: Get a specific announcement
     - create: Create a new announcement (managers only, auto-generates PDF)
     - update: Update an announcement (owner only)
@@ -52,6 +53,11 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     - download_pdf: Download the generated PDF for an announcement
     - regenerate_pdf: Regenerate the PDF for an announcement
     - pdf_status: Check PDF generation status
+    
+    SECURITY:
+    - Superusers can see all announcements
+    - Managers (is_staff) can only see announcements from their assigned estate
+    - Regular users can only see active announcements from their estate
     """
     
     filter_backends = [DjangoFilterBackend, OrderingFilter]
@@ -71,13 +77,26 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
     
     def get_queryset(self):
+        """
+        Filter queryset to only show announcements from user's estate.
+        
+        Only superusers can see all announcements.
+        Managers (is_staff) and regular users can only see announcements from their assigned estate.
+        
+        Returns:
+            Filtered QuerySet of Announcement instances
+        """
         if getattr(self, 'swagger_fake_view', False):
             return Announcement.objects.none()
 
         user = self.request.user
+        
+        if not user.is_authenticated:
+            return Announcement.objects.none()
+        
         queryset = Announcement.objects.all()
 
-        # Actions that MUST see the object
+        # Actions that MUST see the object (for permission checks)
         if self.action in [
             'update',
             'partial_update',
@@ -87,7 +106,33 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             'regenerate_pdf',
             'pdf_status',
         ]:
+            # Still need to filter by estate for non-superusers
+            if not user.is_superuser:
+                if not user.estate:
+                    logger.warning(
+                        f"User {user.id} (is_staff={user.is_staff}) has no estate assigned"
+                    )
+                    return Announcement.objects.none()
+                queryset = queryset.filter(estate=user.estate)
             return queryset
+
+        # Only superusers can see all announcements (not is_staff)
+        if user.is_superuser:
+            logger.info(f"Superuser {user.id} accessing all announcements")
+            # Continue with active/inactive filtering below
+        else:
+            # Managers (is_staff) and regular users can only see announcements from their estate
+            if not user.estate:
+                logger.warning(
+                    f"User {user.id} (is_staff={user.is_staff}) has no estate assigned, returning empty queryset"
+                )
+                return Announcement.objects.none()
+            
+            queryset = queryset.filter(estate=user.estate)
+            logger.info(
+                f"Filtering announcements for user {user.id} (is_staff={user.is_staff}) "
+                f"to estate {user.estate.id}"
+            )
 
         # Retrieve logic
         if self.action == 'retrieve':
@@ -154,6 +199,21 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        # Validate estate assignment for non-superusers
+        if not request.user.is_superuser:
+            estate_id = serializer.validated_data.get('estate')
+            if estate_id and hasattr(request.user, 'estate'):
+                if request.user.estate and str(request.user.estate.id) != str(estate_id.id):
+                    logger.warning(
+                        f"User {request.user.id} (is_staff={request.user.is_staff}) "
+                        f"attempted to create announcement for estate {estate_id.id} "
+                        f"but they manage estate {request.user.estate.id}"
+                    )
+                    return Response(
+                        {'error': 'You can only create announcements for your assigned estate'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
 
         announcement = services.create_announcement(
             created_by=request.user,

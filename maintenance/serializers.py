@@ -86,12 +86,28 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         return obj.status == MaintenanceTicket.StatusChoices.RESOLVED
     
     def get_days_open(self, obj: MaintenanceTicket) -> int:
-        """Calculate number of days the ticket has been open."""
-        if obj.resolved_at:
+        """
+        Calculate number of days the ticket has been/was open.
+        
+        For resolved tickets: days from creation to resolution
+        For open tickets: days from creation (or last reopen) to now
+        """
+        # Use timezone-aware datetime
+        now = timezone.now()
+        
+        if obj.status == MaintenanceTicket.StatusChoices.RESOLVED and obj.resolved_at:
+            # Ticket is resolved - calculate from created_at to resolved_at
             delta = obj.resolved_at - obj.created_at
         else:
-            delta = timezone.now() - obj.created_at
-        return delta.days
+            # Ticket is still open - calculate from created_at to now
+            delta = now - obj.created_at
+        
+        # Return total days (rounded up if there's any partial day)
+        days = delta.days
+        if delta.seconds > 0:
+            days += 1
+            
+        return max(0, days)  # Ensure we never return negative days
 
 
 class MaintenanceTicketCreateSerializer(serializers.ModelSerializer):
@@ -191,11 +207,6 @@ class MaintenanceTicketUpdateSerializer(serializers.ModelSerializer):
     
     Allows updating specific fields while protecting others.
     """
-    # category = serializers.PrimaryKeyRelatedField(
-    #     queryset=MaintenanceCategory.objects.all(),
-    #     required=True,
-    #     allow_null=False,
-    # )
     class Meta:
         model = MaintenanceTicket
         fields = [
@@ -274,7 +285,9 @@ class MaintenanceTicketUpdateSerializer(serializers.ModelSerializer):
         if (new_status == MaintenanceTicket.StatusChoices.OPEN and
             instance.status == MaintenanceTicket.StatusChoices.RESOLVED):
             validated_data['resolved_at'] = None
-            logger.info(f"Ticket {instance.id} reopened")
+            # When reopening, we update created_at to now for accurate days_open calculation
+            validated_data['created_at'] = timezone.now()
+            logger.info(f"Ticket {instance.id} reopened, created_at updated to {validated_data['created_at']}")
         
         return super().update(instance, validated_data)
 
@@ -298,21 +311,31 @@ class MaintenanceTicketListSerializer(serializers.ModelSerializer):
         read_only=True
     )
     identifier = serializers.SerializerMethodField()
+    is_resolved = serializers.SerializerMethodField()
+    days_open = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
     
     class Meta:
         model = MaintenanceTicket
         fields = [
             'id',
             'title',
+            'description',
             'category',
             'category_display',
             'status',
             'status_display',
+            'estate',
             'estate_name',
             'unit',
             'identifier',
+            'created_by',
+            'created_by_name',
+            'is_resolved',
+            'days_open',
             'created_at',
             'updated_at',
+            'resolved_at',
         ]
         read_only_fields = fields
     
@@ -321,3 +344,33 @@ class MaintenanceTicketListSerializer(serializers.ModelSerializer):
         if obj.unit:
             return getattr(obj.unit, 'unit_number', str(obj.unit))
         return None
+    
+    def get_is_resolved(self, obj: MaintenanceTicket) -> bool:
+        """Check if the ticket is resolved."""
+        return obj.status == MaintenanceTicket.StatusChoices.RESOLVED
+    
+    def get_days_open(self, obj: MaintenanceTicket) -> int:
+        """
+        Calculate number of days the ticket has been/was open.
+        
+        For resolved tickets: days from creation to resolution
+        For open tickets: days from creation (or last reopen) to now
+        """
+        now = timezone.now()
+        
+        if obj.status == MaintenanceTicket.StatusChoices.RESOLVED and obj.resolved_at:
+            delta = obj.resolved_at - obj.created_at
+        else:
+            delta = now - obj.created_at
+        
+        days = delta.days
+        if delta.seconds > 0:
+            days += 1
+            
+        return max(0, days)
+    
+    def get_created_by_name(self, obj: MaintenanceTicket) -> str:
+        """Get the full name of the user who created the ticket."""
+        if hasattr(obj.created_by, 'get_full_name'):
+            return obj.created_by.get_full_name() or obj.created_by.email
+        return str(obj.created_by)

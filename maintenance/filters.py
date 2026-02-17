@@ -25,18 +25,6 @@ class MaintenanceTicketFilter(django_filters.FilterSet):
     - Search in title/description
     """
     
-    # status = django_filters.ChoiceFilter(
-    #     field_name='status',
-    #     choices=MaintenanceTicket.StatusChoices.choices,
-    #     help_text='Filter by ticket status'
-    # )
-
-    # category = django_filters.ChoiceFilter(
-    #     field_name='category',
-    #     choices=MaintenanceTicket.CategoryChoices.choices,
-    #     help_text='Filter by ticket category'
-    # )
-
     status = django_filters.CharFilter(  
         field_name="status",
         lookup_expr="iexact",  # Case-insensitive
@@ -49,20 +37,11 @@ class MaintenanceTicketFilter(django_filters.FilterSet):
         help_text='Filter by ticket category (case-insensitive)'
     )
     
-
-    # estate_id = django_filters.CharFilter(
-    #     field_name='estate_id',
-    #     help_text='Filter by estate UUID'
-    # )
     estate = django_filters.UUIDFilter(
         field_name="estate__id",
         help_text="Filter by estate UUID"
     )
 
-    # unit_id = django_filters.CharFilter(
-    #     field_name='unit_id',
-    #     help_text='Filter by unit UUID'
-    # )
     unit = django_filters.UUIDFilter(
         field_name="unit__id",
         help_text="Filter by unit UUID"
@@ -107,18 +86,15 @@ class MaintenanceTicketFilter(django_filters.FilterSet):
         help_text='Filter tickets with or without unit association'
     )
     
-    # search = django_filters.CharFilter(
-    #     method='filter_search',
-    #     help_text='Search in title and description'
-    # )
+    search = django_filters.CharFilter(
+        method='filter_search',
+        help_text='Search in title and description'
+    )
     
     class Meta:
         model = MaintenanceTicket
-        # fields = {
-        #     'status': ['exact'],
-        #     'category': ['exact'],
-        # }
-        fields = ["estate", "unit", "status", "category"]
+        # Remove duplicates - only list fields that are NOT defined above
+        fields = []
     
     def filter_is_resolved(self, queryset, name, value):
         """

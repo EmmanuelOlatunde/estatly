@@ -9,6 +9,7 @@ Handles serialization and validation of announcement data.
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Announcement
+from estates.models import Estate
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,11 +57,14 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     
     created_by = AnnouncementCreatorSerializer(read_only=True)
     preview = serializers.SerializerMethodField()
+    estate_name = serializers.CharField(source='estate.name', read_only=True)
     
     class Meta:
         model = Announcement
         fields = [
             'id',
+            'estate',
+            'estate_name',
             'title',
             'message',
             'preview',
@@ -90,11 +94,16 @@ class AnnouncementSerializer(serializers.ModelSerializer):
             return obj.message
         return f"{obj.message[:97]}..."
 
+
 class AnnouncementCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating new announcements.
     """
 
+    estate = serializers.PrimaryKeyRelatedField(
+        queryset=Estate.objects.all(),
+        required=True
+    )
     is_active = serializers.BooleanField(
         required=False,
         default=True
@@ -103,12 +112,54 @@ class AnnouncementCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Announcement
         fields = [
+            'estate',
             'title',
             'message',
             'is_active',
         ]
 
+    def validate_estate(self, value):
+        """
+        Ensure non-superusers can only create for their estate.
+        
+        Args:
+            value: Estate instance
+            
+        Returns:
+            Validated estate
+            
+        Raises:
+            ValidationError: If estate is invalid for this user
+        """
+        request = self.context.get('request')
+        if request and request.user:
+            if not request.user.is_superuser:
+                # Check if user has an estate
+                if not hasattr(request.user, 'estate') or not request.user.estate:
+                    raise serializers.ValidationError(
+                        "You must be assigned to an estate to create announcements"
+                    )
+                
+                # Check if estate matches user's estate
+                if value.id != request.user.estate.id:
+                    raise serializers.ValidationError(
+                        f"You can only create announcements for your assigned estate: {request.user.estate.name}"
+                    )
+        return value
+
     def validate_title(self, value: str) -> str:
+        """
+        Validate the title field.
+        
+        Args:
+            value: Title value to validate
+            
+        Returns:
+            Cleaned title value
+            
+        Raises:
+            ValidationError: If title is invalid
+        """
         if not value or len(value.strip()) == 0:
             raise serializers.ValidationError(
                 "Title cannot be empty or contain only whitespace."
@@ -122,6 +173,18 @@ class AnnouncementCreateSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate_message(self, value: str) -> str:
+        """
+        Validate the message field.
+        
+        Args:
+            value: Message value to validate
+            
+        Returns:
+            Cleaned message value
+            
+        Raises:
+            ValidationError: If message is invalid
+        """
         if not value or len(value.strip()) == 0:
             raise serializers.ValidationError(
                 "Message cannot be empty or contain only whitespace."
@@ -134,11 +197,13 @@ class AnnouncementCreateSerializer(serializers.ModelSerializer):
 
         return value.strip()
 
+
 class AnnouncementUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating existing announcements.
     
     Allows partial updates of announcement fields.
+    Note: Estate cannot be changed after creation.
     """
     
     class Meta:

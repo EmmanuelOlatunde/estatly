@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 def create_announcement(
     *,
     created_by,
+    estate,
     title: str,
     message: str,
     is_active: bool = True,
@@ -34,6 +35,7 @@ def create_announcement(
     
     Args:
         created_by: The user creating the announcement (must be a manager)
+        estate: The estate this announcement belongs to
         title: The announcement title
         message: The announcement message content
         is_active: Whether the announcement is active (default: True)
@@ -47,7 +49,8 @@ def create_announcement(
         PermissionDenied: If user doesn't have permission
     """
     logger.info(
-        f"Creating announcement titled '{title}' by user {created_by.id}"
+        f"Creating announcement titled '{title}' by user {created_by.id} "
+        f"for estate {estate.id}"
     )
     
     # Validate user permissions
@@ -59,10 +62,23 @@ def create_announcement(
             "You do not have permission to create announcements."
         )
     
+    # Validate estate assignment for non-superusers
+    if not created_by.is_superuser:
+        if hasattr(created_by, 'estate') and created_by.estate:
+            if estate.id != created_by.estate.id:
+                logger.warning(
+                    f"User {created_by.id} attempted to create announcement "
+                    f"for estate {estate.id} but they manage estate {created_by.estate.id}"
+                )
+                raise PermissionDenied(
+                    f"You can only create announcements for your assigned estate: {created_by.estate.name}"
+                )
+    
     # Create the announcement
     try:
         announcement = Announcement(
             created_by=created_by,
+            estate=estate,
             title=title.strip(),
             message=message.strip(),
             is_active=is_active,
@@ -139,9 +155,9 @@ def update_announcement(
         if is_active is not None:
             announcement.is_active = is_active
         
-        # Update any additional fields
+        # Update any additional fields (but not estate - it can't be changed)
         for key, value in kwargs.items():
-            if hasattr(announcement, key):
+            if hasattr(announcement, key) and key != 'estate':
                 setattr(announcement, key, value)
         
         announcement.full_clean()
@@ -214,8 +230,9 @@ def get_user_announcements(
     """
     Get announcements visible to a user.
     
-    For managers: returns their own announcements
-    For other users: returns all active announcements
+    Superusers: All announcements
+    Managers: Only announcements from their estate
+    Other users: All active announcements from their estate
     
     Args:
         user: The user requesting announcements
@@ -228,18 +245,21 @@ def get_user_announcements(
         f"Fetching announcements for user {user.id}"
     )
     
-    if _is_manager(user):
-        # Managers see their own announcements
-        queryset = Announcement.objects.filter(created_by=user)
-    else:
-        # Other users see all announcements
+    # Superusers see all announcements
+    if user.is_superuser:
         queryset = Announcement.objects.all()
+    # Managers and regular users see only their estate's announcements
+    elif hasattr(user, 'estate') and user.estate:
+        queryset = Announcement.objects.filter(estate=user.estate)
+    else:
+        # Users without estates see nothing
+        queryset = Announcement.objects.none()
     
     # Filter by active status
     if not include_inactive:
         queryset = queryset.filter(is_active=True)
     
-    return queryset.select_related('created_by')
+    return queryset.select_related('created_by', 'estate')
 
 
 def get_announcement_by_id(
@@ -266,7 +286,7 @@ def get_announcement_by_id(
     
     try:
         announcement = Announcement.objects.select_related(
-            'created_by'
+            'created_by', 'estate'
         ).get(id=announcement_id)
         
         # Check if user can view this announcement
@@ -336,11 +356,23 @@ def _user_can_view_announcement(user, announcement: Announcement) -> bool:
     Returns:
         True if user can view the announcement, False otherwise
     """
+    # Superusers can view any announcement
+    if user.is_superuser:
+        return True
+    
+    # Check if announcement is from user's estate
+    if hasattr(user, 'estate') and user.estate:
+        if announcement.estate_id != user.estate.id:
+            return False
+    else:
+        # Users without estates can't view announcements
+        return False
+    
     # Inactive announcements can only be viewed by their creator
     if not announcement.is_active:
         return announcement.created_by == user
     
-    # Active announcements can be viewed by anyone
+    # Active announcements can be viewed by anyone in the estate
     return True
 
 
@@ -355,8 +387,17 @@ def _user_can_modify_announcement(user, announcement: Announcement) -> bool:
     Returns:
         True if user can modify the announcement, False otherwise
     """
-    # Only the creator or superuser can modify
+    # Superusers can modify any announcement
     if user.is_superuser:
         return True
     
+    # Check if announcement is from user's estate
+    if hasattr(user, 'estate') and user.estate:
+        if announcement.estate_id != user.estate.id:
+            return False
+    else:
+        # Users without estates can't modify announcements
+        return False
+    
+    # Only the creator can modify (within their estate)
     return announcement.created_by == user

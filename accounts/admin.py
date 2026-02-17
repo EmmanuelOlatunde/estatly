@@ -8,6 +8,7 @@ Registers models and customizes admin interface.
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
+from .forms import CustomUserCreationForm, CustomUserChangeForm
 
 from .models import PasswordResetToken, User
 
@@ -15,7 +16,8 @@ from .models import PasswordResetToken, User
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     """Admin interface for User model."""
-
+    form = CustomUserChangeForm
+    add_form = CustomUserCreationForm
     list_display = [
         'email',
         'first_name',
@@ -52,7 +54,7 @@ class UserAdmin(BaseUserAdmin):
             'fields': ('id', 'email', 'password')
         }),
         ('Personal Info', {
-            'fields': ('first_name', 'last_name', 'role')
+            'fields': ('first_name', 'last_name', 'role', 'estate')
         }),
         ('Permissions', {
             'fields': (
@@ -70,7 +72,7 @@ class UserAdmin(BaseUserAdmin):
                 'created_at',
                 'updated_at',
             )
-        }),
+        }), 
     )
 
     add_fieldsets = (
@@ -81,6 +83,7 @@ class UserAdmin(BaseUserAdmin):
                 'first_name',
                 'last_name',
                 'role',
+                'estate',
                 'password1',
                 'password2',
                 'is_active',

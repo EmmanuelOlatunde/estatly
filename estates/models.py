@@ -7,6 +7,7 @@ import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 
 
 class Estate(models.Model):
@@ -66,6 +67,12 @@ class Estate(models.Model):
         blank=True,
         null=True,
         help_text=_('Physical address of the estate')
+    )
+    manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="managed_estates",
+        help_text=_("Estate manager responsible for this estate"),
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

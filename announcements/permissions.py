@@ -4,6 +4,7 @@
 Custom permission classes for announcements app.
 
 Defines fine-grained permissions for announcement operations.
+SECURITY: Only is_superuser is treated as admin, not is_staff (managers).
 """
 
 import logging
@@ -23,6 +24,9 @@ class IsManagerOrReadOnly(permissions.BasePermission):
     Permission class that allows:
     - Managers to create, update, and delete announcements
     - All authenticated users to read announcements
+    
+    Note: This checks if user is a manager (has is_staff or specific role),
+    but does NOT grant cross-estate access. Estate filtering is done in get_queryset().
     """
     
     message = "You must be a manager to perform this action."
@@ -55,8 +59,12 @@ class IsManagerOrReadOnly(permissions.BasePermission):
         Returns:
             True if user is a manager, False otherwise
         """
-        # Check if user has staff status or is superuser
-        if user.is_staff or user.is_superuser:
+        # Superusers are always managers
+        if user.is_superuser:
+            return True
+        
+        # is_staff indicates manager role (but not cross-estate access)
+        if user.is_staff:
             return True
         
         # Check for manager role using the User.Role choices
@@ -76,7 +84,10 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
     """
     Permission class that allows:
     - Announcement creators to update and delete their own announcements
+    - Superusers to modify any announcement
     - All authenticated users to read announcements
+    
+    Note: is_staff (managers) are NOT treated as admins here.
     """
     
     message = "You can only modify your own announcements."
@@ -112,18 +123,21 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
             # Only show active announcements to non-creators
             if not obj.is_active and obj.created_by != request.user:
                 logger.warning(
-                    f"User {request.user.id} attempted to view inactive announcement {obj.id}"
+                    f"User {request.user.id} (is_staff={request.user.is_staff}) "
+                    f"attempted to view inactive announcement {obj.id}"
                 )
                 return False
             return True
         
-        # Write permissions are only allowed to the creator or superuser
+        # Write permissions are only allowed to the creator or superuser (not is_staff)
         is_owner = obj.created_by == request.user
         is_superuser = request.user.is_superuser
         
         if not (is_owner or is_superuser):
             logger.warning(
-                f"User {request.user.id} attempted to modify announcement {obj.id} without permission"
+                f"User {request.user.id} (is_staff={request.user.is_staff}) "
+                f"attempted to modify announcement {obj.id} without permission. "
+                f"Creator: {obj.created_by.id}"
             )
         
         return is_owner or is_superuser
@@ -132,6 +146,9 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
 class IsManager(permissions.BasePermission):
     """
     Permission class that only allows managers to access the view.
+    
+    Note: This checks if user is a manager (has is_staff or specific role),
+    but does NOT grant cross-estate access. Estate filtering is done in get_queryset().
     """
     
     message = "You must be a manager to access this resource."
@@ -162,8 +179,12 @@ class IsManager(permissions.BasePermission):
         Returns:
             True if user is a manager, False otherwise
         """
-        # Check if user has staff status or is superuser
-        if user.is_staff or user.is_superuser:
+        # Superusers are always managers
+        if user.is_superuser:
+            return True
+        
+        # is_staff indicates manager role (but not cross-estate access)
+        if user.is_staff:
             return True
         
         # Check for manager role using the User.Role choices

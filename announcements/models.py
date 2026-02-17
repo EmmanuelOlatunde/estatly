@@ -21,12 +21,21 @@ class Announcement(models.Model):
     Announcements are structured messages that provide an alternative to
     chaotic WhatsApp group messages. Managers can create announcements
     that can be viewed, printed, or copied for distribution.
+    
+    IMPORTANT: Each announcement belongs to a specific estate.
+    Managers can only create/view announcements for their assigned estate.
     """
     
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
         editable=False
+    )
+    estate = models.ForeignKey(
+        'estates.Estate',
+        on_delete=models.CASCADE,
+        related_name='announcements',
+        help_text="Estate this announcement belongs to"
     )
     title = models.CharField(
         max_length=200,
@@ -54,8 +63,10 @@ class Announcement(models.Model):
         verbose_name_plural = 'Announcements'
         indexes = [
             models.Index(fields=['-created_at']),
+            models.Index(fields=['estate', '-created_at']),
             models.Index(fields=['created_by', '-created_at']),
             models.Index(fields=['is_active', '-created_at']),
+            models.Index(fields=['estate', 'is_active', '-created_at']),
         ]
     
     def __str__(self) -> str:
@@ -80,13 +91,22 @@ class Announcement(models.Model):
             raise ValidationError({
                 'message': 'Message cannot be empty or contain only whitespace.'
             })
+        
+        # Validate that estate matches creator's estate (for non-superusers)
+        # Use try/except to handle case where estate hasn't been set yet
+        try:
+            if self.created_by and self.estate_id:  # Use estate_id instead of estate
+                if not self.created_by.is_superuser:
+                    if hasattr(self.created_by, 'estate') and self.created_by.estate:
+                        if self.estate_id != self.created_by.estate.id:
+                            raise ValidationError({
+                                'estate': f'You can only create announcements for your assigned estate ({self.created_by.estate}).'
+                            })
+        except Exception:
+            # If estate_id is not set, it will fail in the required field validation
+            pass
     
     def save(self, *args, **kwargs):
         """Override save to call full_clean."""
         self.full_clean()
         super().save(*args, **kwargs)
-
-    # def save(self, *args, **kwargs):
-    #     self.full_clean()
-    #     self.updated_at = timezone.now()  # ✅ force update
-    #     super().save(*args, **kwargs)

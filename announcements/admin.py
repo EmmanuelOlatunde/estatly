@@ -22,6 +22,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
     
     list_display = [
         'title',
+        'estate_name',
         'preview_message',
         'created_by',
         'status_badge',
@@ -30,6 +31,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
     ]
     
     list_filter = [
+        'estate',
         'is_active',
         'created_at',
         'updated_at',
@@ -39,6 +41,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
     search_fields = [
         'title',
         'message',
+        'estate__name',
         'created_by__email',
         'created_by__first_name',
         'created_by__last_name',
@@ -52,7 +55,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('title', 'message', 'is_active')
+            'fields': ('estate', 'title', 'message', 'is_active')
         }),
         ('Metadata', {
             'fields': ('id', 'created_by', 'created_at', 'updated_at'),
@@ -65,6 +68,27 @@ class AnnouncementAdmin(admin.ModelAdmin):
     ordering = ['-created_at']
     
     list_per_page = 25
+    
+    autocomplete_fields = ['estate']  # Enable autocomplete for estate selection
+    
+    def estate_name(self, obj):
+        """
+        Display the estate name in list view.
+        
+        Args:
+            obj: Announcement instance
+        
+        Returns:
+            Estate name or 'No Estate' if not set
+        """
+        if obj.estate:
+            return obj.estate.name
+        return format_html(
+            '<span style="color: #dc3545; font-weight: bold;">⚠️ No Estate</span>'
+        )
+    
+    estate_name.short_description = 'Estate'
+    estate_name.admin_order_field = 'estate__name'
     
     def preview_message(self, obj):
         """
@@ -109,7 +133,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
         Determine if the user has permission to delete an announcement.
         
         Superusers can delete any announcement.
-        Staff can only delete their own announcements.
+        Staff can only delete their own announcements from their estate.
         
         Args:
             request: HTTP request
@@ -122,7 +146,14 @@ class AnnouncementAdmin(admin.ModelAdmin):
             return True
         
         if obj is not None:
-            return obj.created_by == request.user
+            # Must be creator AND announcement must be from their estate
+            is_creator = obj.created_by == request.user
+            same_estate = (
+                hasattr(request.user, 'estate') and 
+                request.user.estate and 
+                obj.estate == request.user.estate
+            )
+            return is_creator and same_estate
         
         return True
     
@@ -131,7 +162,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
         Determine if the user has permission to change an announcement.
         
         Superusers can change any announcement.
-        Staff can only change their own announcements.
+        Staff can only change their own announcements from their estate.
         
         Args:
             request: HTTP request
@@ -144,7 +175,14 @@ class AnnouncementAdmin(admin.ModelAdmin):
             return True
         
         if obj is not None:
-            return obj.created_by == request.user
+            # Must be creator AND announcement must be from their estate
+            is_creator = obj.created_by == request.user
+            same_estate = (
+                hasattr(request.user, 'estate') and 
+                request.user.estate and 
+                obj.estate == request.user.estate
+            )
+            return is_creator and same_estate
         
         return True
     
@@ -153,7 +191,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
         Save the announcement model.
         
         If creating a new announcement, set the created_by field
-        to the current user.
+        to the current user and default estate to user's estate.
         
         Args:
             request: HTTP request
@@ -163,6 +201,11 @@ class AnnouncementAdmin(admin.ModelAdmin):
         """
         if not change:
             obj.created_by = request.user
+            
+            # Auto-set estate for non-superusers if not already set
+            if not request.user.is_superuser and not obj.estate:
+                if hasattr(request.user, 'estate') and request.user.estate:
+                    obj.estate = request.user.estate
         
         super().save_model(request, obj, form, change)
     
@@ -171,7 +214,7 @@ class AnnouncementAdmin(admin.ModelAdmin):
         Get the queryset for the admin list view.
         
         Superusers see all announcements.
-        Staff users see only their own announcements.
+        Staff users see only announcements from their estate.
         
         Args:
             request: HTTP request
@@ -184,4 +227,65 @@ class AnnouncementAdmin(admin.ModelAdmin):
         if request.user.is_superuser:
             return qs
         
+        # Filter by user's estate for staff members
+        if hasattr(request.user, 'estate') and request.user.estate:
+            return qs.filter(estate=request.user.estate)
+        
+        # If staff user has no estate, show only their own announcements
         return qs.filter(created_by=request.user)
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """
+        Customize the estate foreign key field in the form.
+        
+        Non-superusers can only select their own estate.
+        Superusers can select any estate.
+        
+        Args:
+            db_field: Database field
+            request: HTTP request
+            **kwargs: Additional arguments
+        
+        Returns:
+            Form field
+        """
+        if db_field.name == "estate":
+            if not request.user.is_superuser:
+                # Non-superusers can only select their own estate
+                if hasattr(request.user, 'estate') and request.user.estate:
+                    from estates.models import Estate
+                    kwargs["queryset"] = Estate.objects.filter(id=request.user.estate.id)
+                    kwargs["initial"] = request.user.estate
+        
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+    
+    def get_readonly_fields(self, request, obj=None):
+        """
+        Get readonly fields based on user permissions.
+        
+        For non-superusers, make estate field readonly if object already exists
+        (they can't change estate after creation).
+        
+        Args:
+            request: HTTP request
+            obj: Announcement instance (optional)
+        
+        Returns:
+            List of readonly field names
+        """
+        readonly = list(self.readonly_fields)
+        
+        # Non-superusers cannot change estate after creation
+        if not request.user.is_superuser and obj is not None:
+            if 'estate' not in readonly:
+                readonly.append('estate')
+        
+        return readonly
+    
+    class Media:
+        """
+        Add custom CSS/JS for the admin interface.
+        """
+        css = {
+            'all': ('admin/css/announcements.css',)  # Optional: custom styling
+        }

@@ -9,8 +9,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 from estates.models import Estate
 
 from .models import Unit
@@ -24,6 +26,17 @@ from .serializers import (
 from .permissions import IsOwner
 from .filters import UnitFilter
 from . import services
+
+
+class UnitPagination(PageNumberPagination):
+    """
+    Custom pagination for units.
+    
+    Allows clients to control page size within limits.
+    """
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class UnitViewSet(viewsets.ModelViewSet):
@@ -46,27 +59,23 @@ class UnitViewSet(viewsets.ModelViewSet):
     - deactivate: Deactivate a unit
     - activate: Activate a unit
     - update_occupancy: Update occupancy status and information
+    - bulk_update_status: Bulk update active/occupied status for multiple units
     """
     
     permission_classes = [IsAuthenticated, IsOwner]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    pagination_class = UnitPagination
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_class = UnitFilter
-    search_fields = ['identifier', 'occupant_name', 'description']
-    ordering_fields = ['identifier', 'created_at', 'updated_at', 'is_occupied']
+    # search_fields = ['identifier', 'occupant_name', 'description']
+    ordering_fields = ['identifier', 'created_at', 'updated_at', 'is_occupied', 'unit_type']
     ordering = ['identifier']
     
-    @swagger_auto_schema(
-        operation_description="List units",
-        responses={200: UnitListSerializer(many=True)},
-    )
     def list(self, request, *args, **kwargs):
+        """List units with filtering, search, and pagination"""
         return super().list(request, *args, **kwargs)
     
-    @swagger_auto_schema(
-        operation_description="Retrieve a unit",
-        responses={200: UnitSerializer},
-    )
     def retrieve(self, request, *args, **kwargs):
+        """Retrieve a unit"""
         return super().retrieve(request, *args, **kwargs)
     
     
@@ -76,6 +85,7 @@ class UnitViewSet(viewsets.ModelViewSet):
         
         For most actions, only active units are returned.
         For the 'activate' action, inactive units are included so they can be activated.
+        Optimizes queries with select_related for estate and owner.
         """
         if getattr(self, 'swagger_fake_view', False):
             return Unit.objects.none()
@@ -88,10 +98,15 @@ class UnitViewSet(viewsets.ModelViewSet):
             self.request.query_params.get('include_inactive', 'false').lower() == 'true'
         )
         
-        return services.get_user_units(
+        queryset = services.get_user_units(
             user=self.request.user,
             include_inactive=include_inactive
         )
+        
+        # Optimize queries with select_related
+        queryset = queryset.select_related('estate', 'owner')
+        
+        return queryset
         
     def get_serializer_class(self):
         """
@@ -113,9 +128,12 @@ class UnitViewSet(viewsets.ModelViewSet):
     @swagger_auto_schema(
         operation_description="Create a new unit",
         request_body=UnitCreateSerializer,
-        responses={201: UnitSerializer},
+        responses={
+            201: UnitSerializer,
+            400: 'Bad Request - Validation errors',
+            403: 'Forbidden - Not authorized to add units to this estate'
+        },
     )
-
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -124,6 +142,13 @@ class UnitViewSet(viewsets.ModelViewSet):
             estate = Estate.objects.get(
                 id=serializer.validated_data["estate"]
             )
+            
+            # Verify user owns the estate
+            if estate.manager != request.user:
+                return Response(
+                    {"estate": "You can only add units to estates you manage."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
             unit = services.create_unit(
                 owner=request.user,
@@ -147,10 +172,15 @@ class UnitViewSet(viewsets.ModelViewSet):
                 {"estate": "Invalid estate ID."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         
     @swagger_auto_schema(
-        operation_description="Update a unit",
+        operation_description="Update a unit (full update)",
         request_body=UnitUpdateSerializer,
         responses={200: UnitSerializer},
     )
@@ -169,6 +199,11 @@ class UnitViewSet(viewsets.ModelViewSet):
             )
             output_serializer = UnitSerializer(unit)
             return Response(output_serializer.data)
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
         except ValueError as e:
             return Response(
                 {'error': str(e)},
@@ -196,6 +231,11 @@ class UnitViewSet(viewsets.ModelViewSet):
         try:
             services.delete_unit(unit=instance, user=request.user)
             return Response(status=status.HTTP_204_NO_CONTENT)
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
         except ValueError as e:
             return Response(
                 {'error': str(e)},
@@ -215,6 +255,13 @@ class UnitViewSet(viewsets.ModelViewSet):
         Returns only units where is_occupied=True and is_active=True.
         """
         queryset = services.get_occupied_units(user=request.user)
+        queryset = queryset.select_related('estate', 'owner')
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = UnitListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
         serializer = UnitListSerializer(queryset, many=True)
         return Response(serializer.data)
     
@@ -231,6 +278,13 @@ class UnitViewSet(viewsets.ModelViewSet):
         Returns only units where is_occupied=False and is_active=True.
         """
         queryset = services.get_vacant_units(user=request.user)
+        queryset = queryset.select_related('estate', 'owner')
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = UnitListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
         serializer = UnitListSerializer(queryset, many=True)
         return Response(serializer.data)
     
@@ -252,6 +306,11 @@ class UnitViewSet(viewsets.ModelViewSet):
             unit = services.deactivate_unit(unit=instance, user=request.user)
             serializer = UnitSerializer(unit)
             return Response(serializer.data)
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
         except ValueError as e:
             return Response(
                 {'error': str(e)},
@@ -293,7 +352,6 @@ class UnitViewSet(viewsets.ModelViewSet):
         request_body=UnitOccupancySerializer,
         responses={200: UnitSerializer},
     )
-
     @action(detail=True, methods=['patch'])
     def update_occupancy(self, request, pk=None):
         """
@@ -319,6 +377,125 @@ class UnitViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_403_FORBIDDEN
             )
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @swagger_auto_schema(
+        method='post',
+        operation_description="Bulk update active/occupied status for multiple units",
+        operation_summary="Bulk update units",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['unit_ids'],
+            properties={
+                'unit_ids': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(type=openapi.TYPE_STRING),
+                    description='List of unit IDs to update'
+                ),
+                'is_active': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Set active status (optional)'
+                ),
+                'is_occupied': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Set occupied status (optional)'
+                ),
+            },
+            example={
+                'unit_ids': ['uuid-1', 'uuid-2', 'uuid-3'],
+                'is_active': True
+            }
+        ),
+        responses={
+            200: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'updated_count': openapi.Schema(
+                        type=openapi.TYPE_INTEGER,
+                        description='Number of units updated'
+                    ),
+                    'unit_ids': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_STRING),
+                        description='List of updated unit IDs'
+                    ),
+                    'changes': openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        description='Fields that were updated'
+                    ),
+                }
+            ),
+            400: 'Bad Request - Invalid data or no units found',
+        }
+    )
+    @action(detail=False, methods=['post'], url_path='bulk-update-status')
+    def bulk_update_status(self, request):
+        """
+        Bulk update active/occupied status for multiple units.
+        
+        Request body:
+        {
+            "unit_ids": ["uuid-1", "uuid-2", "uuid-3"],
+            "is_active": true,      # optional
+            "is_occupied": false    # optional
+        }
+        
+        Response:
+        {
+            "updated_count": 3,
+            "unit_ids": ["uuid-1", "uuid-2", "uuid-3"],
+            "changes": {
+                "is_active": true
+            }
+        }
+        """
+        unit_ids = request.data.get('unit_ids', [])
+        
+        if not unit_ids:
+            return Response(
+                {'error': 'unit_ids is required and must not be empty'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not isinstance(unit_ids, list):
+            return Response(
+                {'error': 'unit_ids must be a list'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get update fields
+        update_fields = {}
+        if 'is_active' in request.data:
+            update_fields['is_active'] = request.data['is_active']
+        if 'is_occupied' in request.data:
+            update_fields['is_occupied'] = request.data['is_occupied']
+            # If marking as unoccupied, clear occupant info
+            if not update_fields['is_occupied']:
+                update_fields['occupant_name'] = None
+                update_fields['occupant_phone'] = None
+        
+        if not update_fields:
+            return Response(
+                {'error': 'At least one of is_active or is_occupied must be provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            updated_count, updated_ids = services.bulk_update_units(
+                user=request.user,
+                unit_ids=unit_ids,
+                **update_fields
+            )
+            
+            return Response({
+                'updated_count': updated_count,
+                'unit_ids': updated_ids,
+                'changes': update_fields
+            })
         except ValueError as e:
             return Response(
                 {'error': str(e)},
