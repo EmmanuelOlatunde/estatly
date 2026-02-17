@@ -10,7 +10,6 @@ class CustomUserCreationForm(UserCreationForm):
             "first_name",
             "last_name",
             "role",
-            "estate",   # 🔥 ADD THIS
         )
 
 

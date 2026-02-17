@@ -54,7 +54,7 @@ class UserAdmin(BaseUserAdmin):
             'fields': ('id', 'email', 'password')
         }),
         ('Personal Info', {
-            'fields': ('first_name', 'last_name', 'role', 'estate')
+            'fields': ('first_name', 'last_name', 'role')
         }),
         ('Permissions', {
             'fields': (
@@ -83,7 +83,6 @@ class UserAdmin(BaseUserAdmin):
                 'first_name',
                 'last_name',
                 'role',
-                'estate',
                 'password1',
                 'password2',
                 'is_active',

@@ -11,125 +11,53 @@ User = get_user_model()
 
 class UnpaidUnitSerializer(serializers.Serializer):
     """
-    Serializer for units/tenants who haven't paid a specific fee.
-    
-    Used in fee payment status reports.
+    Serializer for units whose owners have not paid a specific fee.
+
+    Field names match the dict keys produced by services.get_fee_payment_status.
+    NOTE: The service uses 'owner_*' keys (not 'tenant_*') because Unit.owner
+    is the correct FK name. If you rename it on the model, update both places.
     """
-    
-    unit_id = serializers.UUIDField(
-        read_only=True,
-        help_text="Unique identifier for the unit"
-    )
-    unit_name = serializers.CharField(
-        read_only=True,
-        help_text="Name/number of the unit"
-    )
-    tenant_id = serializers.UUIDField(
-        read_only=True,
-        allow_null=True,
-        help_text="Unique identifier for the tenant (user)"
-    )
-    tenant_name = serializers.CharField(
-        read_only=True,
-        help_text="Full name of the tenant"
-    )
-    tenant_email = serializers.EmailField(
-        read_only=True,
-        help_text="Email address of the tenant"
-    )
-    estate_name = serializers.CharField(
-        read_only=True,
-        help_text="Name of the estate/property"
-    )
-    estate_id = serializers.UUIDField(
-        read_only=True,
-        help_text="Unique identifier for the estate"
-    )
-    amount_due = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        read_only=True,
-        help_text="Amount the tenant owes for this fee"
-    )
-    due_date = serializers.DateField(
-        read_only=True,
-        help_text="When the payment was due"
-    )
-    days_overdue = serializers.IntegerField(
-        read_only=True,
-        help_text="Number of days the payment is overdue"
-    )
+
+    unit_id = serializers.UUIDField(read_only=True)
+    unit_name = serializers.CharField(read_only=True)
+    owner_id = serializers.UUIDField(read_only=True, allow_null=True)
+    owner_name = serializers.CharField(read_only=True, allow_null=True)
+    owner_email = serializers.EmailField(read_only=True, allow_null=True)
+    estate_id = serializers.UUIDField(read_only=True)
+    estate_name = serializers.CharField(read_only=True)
+    amount_due = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    due_date = serializers.DateField(read_only=True, allow_null=True)
+    days_overdue = serializers.IntegerField(read_only=True)
 
 
 class FeePaymentStatusSerializer(serializers.Serializer):
     """
     Serializer for payment status report of a specific fee.
-    
-    Shows who has paid and who hasn't for a given fee.
+
+    Shows aggregate financials plus a list of unpaid units.
     """
-    
-    fee_id = serializers.UUIDField(
-        read_only=True,
-        help_text="Unique identifier for the fee"
-    )
-    fee_name = serializers.CharField(
-        read_only=True,
-        help_text="Name of the fee"
-    )
-    fee_type = serializers.CharField(
-        read_only=True,
-        help_text="Type of fee (monthly, annual, one-time)"
-    )
-    total_expected = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        read_only=True,
-        help_text="Total amount expected from all units"
-    )
-    total_collected = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        read_only=True,
-        help_text="Total amount collected so far"
-    )
-    total_pending = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        read_only=True,
-        help_text="Total amount still pending"
-    )
-    payment_rate = serializers.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        read_only=True,
-        help_text="Percentage of expected amount collected"
-    )
-    total_units = serializers.IntegerField(
-        read_only=True,
-        help_text="Total number of units liable for this fee"
-    )
-    paid_units = serializers.IntegerField(
-        read_only=True,
-        help_text="Number of units that have paid"
-    )
-    unpaid_units_count = serializers.IntegerField(
-        read_only=True,
-        help_text="Number of units that haven't paid"
-    )
-    unpaid_units = UnpaidUnitSerializer(
-        many=True,
-        read_only=True,
-        help_text="List of units that haven't paid"
-    )
+
+    fee_id = serializers.UUIDField(read_only=True)
+    fee_name = serializers.CharField(read_only=True)
+    fee_type = serializers.CharField(read_only=True)
+    total_expected = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_collected = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_pending = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    payment_rate = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    total_units = serializers.IntegerField(read_only=True)
+    paid_units = serializers.IntegerField(read_only=True)
+    unpaid_units_count = serializers.IntegerField(read_only=True)
+    unpaid_units = UnpaidUnitSerializer(many=True, read_only=True)
 
 
 class FeeSummarySerializer(serializers.Serializer):
     """
-    Serializer for summarized fee collection information.
-    
-    Provides high-level overview without detailed unpaid unit list.
+    Serializer for a single fee's collection summary.
+
+    Used inside OverallPaymentSummarySerializer and EstatePaymentSummarySerializer.
+    No unpaid unit detail — high-level overview only.
     """
-    
+
     fee_id = serializers.UUIDField(read_only=True)
     fee_name = serializers.CharField(read_only=True)
     fee_type = serializers.CharField(read_only=True)
@@ -144,58 +72,39 @@ class FeeSummarySerializer(serializers.Serializer):
 
 class OverallPaymentSummarySerializer(serializers.Serializer):
     """
-    Serializer for overall payment summary across all fees.
-    
-    Provides a high-level dashboard view of all payment collections.
+    Serializer for the overall payment summary across all fees.
+
+    Returned by GET /api/reports/overall-summary/
     """
-    
-    total_fees = serializers.IntegerField(
-        read_only=True,
-        help_text="Total number of active fees"
-    )
-    total_expected_all_fees = serializers.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        read_only=True,
-        help_text="Total expected across all fees"
-    )
-    total_collected_all_fees = serializers.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        read_only=True,
-        help_text="Total collected across all fees"
-    )
-    total_pending_all_fees = serializers.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        read_only=True,
-        help_text="Total pending across all fees"
-    )
-    overall_payment_rate = serializers.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        read_only=True,
-        help_text="Overall collection rate percentage"
-    )
-    fees_summary = FeeSummarySerializer(
-        many=True,
-        read_only=True,
-        help_text="Summary for each individual fee"
-    )
+
+    total_fees = serializers.IntegerField(read_only=True)
+    total_expected_all_fees = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    total_collected_all_fees = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    total_pending_all_fees = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    overall_payment_rate = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    fees_summary = FeeSummarySerializer(many=True, read_only=True)
 
 
 class EstatePaymentSummarySerializer(serializers.Serializer):
     """
     Serializer for estate-specific payment summary.
+
+    Returned by GET /api/reports/estate/<estate_id>/
+    NOTE: get_estate_payment_summary delegates to get_overall_payment_summary,
+    so the response shape is identical to OverallPaymentSummarySerializer.
+    estate_id / estate_name / total_units / occupied_units are not currently
+    returned by the service — add them to the service first before uncommenting.
     """
-    
-    estate_id = serializers.UUIDField(read_only=True)
-    estate_name = serializers.CharField(read_only=True)
-    total_units = serializers.IntegerField(read_only=True)
-    occupied_units = serializers.IntegerField(read_only=True)
+
     total_fees = serializers.IntegerField(read_only=True)
-    total_expected = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
-    total_collected = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
-    total_pending = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
-    payment_rate = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    total_expected_all_fees = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    total_collected_all_fees = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    total_pending_all_fees = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    overall_payment_rate = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
     fees_summary = FeeSummarySerializer(many=True, read_only=True)
+
+    # Uncomment and add to service output when ready:
+    # estate_id = serializers.UUIDField(read_only=True)
+    # estate_name = serializers.CharField(read_only=True)
+    # total_units = serializers.IntegerField(read_only=True)
+    # occupied_units = serializers.IntegerField(read_only=True)

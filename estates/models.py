@@ -68,10 +68,10 @@ class Estate(models.Model):
         null=True,
         help_text=_('Physical address of the estate')
     )
-    manager = models.ForeignKey(
+    manager = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="managed_estates",
+        related_name="estate",
         help_text=_("Estate manager responsible for this estate"),
     )
     created_at = models.DateTimeField(auto_now_add=True)

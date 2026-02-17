@@ -10,7 +10,6 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.core.validators import EmailValidator
 from django.db import models
 from django.utils import timezone
-from estates.models import Estate
 from django.core.exceptions import ValidationError
 
 
@@ -80,13 +79,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         REGULAR = 'REGULAR', 'Regular'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    estate = models.ForeignKey(
-        Estate,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="users"
-    )
+    # estate = models.ForeignKey(
+    #     Estate,
+    #     on_delete=models.CASCADE,
+    #     null=True,
+    #     blank=True,
+    #     related_name="users"
+    # )
 
 
     email = models.EmailField(

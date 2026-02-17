@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 from accounts.models import User
 
@@ -32,18 +32,12 @@ class EstateViewSet(viewsets.ModelViewSet):
 
     permission_classes = [IsAuthenticated, CanManageEstate]
     pagination_class = EstatePagination
-
-    filter_backends = [
-        DjangoFilterBackend,
-        SearchFilter,
-        OrderingFilter,
-    ]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = EstateFilter
     search_fields = ['name', 'description', 'address']
     ordering_fields = ['name', 'created_at', 'updated_at', 'approximate_units']
     ordering = ['-created_at']
 
-    # Serializer mapping
     serializer_action_map = {
         'list': EstateListSerializer,
         'create': EstateCreateSerializer,
@@ -51,51 +45,36 @@ class EstateViewSet(viewsets.ModelViewSet):
         'partial_update': EstateUpdateSerializer,
     }
 
-    # Optimized base queryset
     queryset = Estate.objects.all()
 
-    # -------------------------
-    # Core DRF Overrides
-    # -------------------------
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Estate.objects.none()
-        
+
         user = self.request.user
 
         if user.is_superuser:
             return Estate.objects.all()
 
         if user.role == User.Role.ESTATE_MANAGER:
-            return Estate.objects.filter(id=user.estate_id)
+            # user.estate_id no longer exists — the FK lives on Estate.manager.
+            # Access the estate through the reverse OneToOne relation instead.
+            try:
+                return Estate.objects.filter(id=user.estate.id)
+            except Estate.DoesNotExist:
+                return Estate.objects.none()
 
         return Estate.objects.none()
-
 
     def get_serializer_class(self):
         return self.serializer_action_map.get(self.action, EstateSerializer)
 
-    # def get_queryset(self):
-    #     queryset = super().get_queryset()
-
-    #     # For list view: only active estates by default
-    #     if self.action == "list" and "is_active" not in self.request.query_params:
-    #         queryset = queryset.filter(is_active=True)
-
-    #     # For retrieve view: include all estates
-    #     return queryset
-
-
     def perform_create(self, serializer):
-        # Call your service
         estate = self._handle_service_call(
             services.create_estate,
             **serializer.validated_data
         )
-        # Assign to serializer.instance so DRF serializes it
         serializer.instance = estate
-        return estate  # optional, but clearer
-
 
     def perform_update(self, serializer):
         serializer.instance = self._handle_service_call(
@@ -104,40 +83,33 @@ class EstateViewSet(viewsets.ModelViewSet):
             **serializer.validated_data
         )
 
-    # -------------------------
-    # Private Helpers (DRY)
-    # -------------------------
     def _handle_service_call(self, func, **kwargs):
-        """Wrap service calls and normalize errors."""
+        """Wrap service calls and normalise errors into DRF validation errors."""
         try:
             return func(**kwargs)
         except ValueError as exc:
             raise serializers.ValidationError(str(exc))
 
     def _toggle_estate(self, estate, activate: bool):
-        """Activate or deactivate estate."""
         if estate.is_active == activate:
             state = "active" if activate else "inactive"
             return Response(
                 {'detail': f'Estate is already {state}.'},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        estate = services.activate_estate(estate=estate) if activate else services.deactivate_estate(estate=estate)
+        estate = (
+            services.activate_estate(estate=estate)
+            if activate
+            else services.deactivate_estate(estate=estate)
+        )
         serializer = self.get_serializer(estate)
-        action = "activated" if activate else "deactivated"
-
+        verb = "activated" if activate else "deactivated"
         return Response(
-            {
-                'detail': f'Estate {action} successfully.',
-                'estate': serializer.data
-            },
-            status=status.HTTP_200_OK
+            {'detail': f'Estate {verb} successfully.', 'estate': serializer.data},
+            status=status.HTTP_200_OK,
         )
 
-    # -------------------------
-    # Custom Actions
-    # -------------------------
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         return self._toggle_estate(self.get_object(), activate=True)
