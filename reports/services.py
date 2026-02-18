@@ -294,3 +294,180 @@ def get_estate_payment_summary(
         user=user,
         estate_id=estate_id,
     )
+
+
+# ── Add to reports/services.py ───────────────────────────────────────────────
+
+def get_estate_audit_report(*, user, estate_id: str) -> dict:
+    """
+    Estate-wide full audit report.
+
+    Returns one row per (unit, fee) assignment covering:
+      - unit & owner details
+      - fee details (name, type, amount, due date)
+      - assignment status (paid / unpaid / partial / waived)
+      - full payment transaction detail when paid
+        (amount, date/time, method, reference, who recorded it)
+
+    This is the transparency report — every unit's complete
+    payment picture across all fees in one place.
+    """
+    from decimal import Decimal
+    from datetime import date as date_type
+    from payments.models import Fee, FeeAssignment, Payment
+
+    logger.info(
+        f"Generating estate audit report for user {user.id}, estate_id={estate_id}"
+    )
+
+    # ── 1. Permission check ────────────────────────────────────────────────
+    try:
+        estate = Estate.objects.get(id=estate_id)
+    except Estate.DoesNotExist:
+        raise ValueError("Estate not found")
+
+    if user.role == User.Role.ESTATE_MANAGER:
+        manager_estate = _get_user_estate(user)
+        if str(manager_estate.id) != str(estate_id):
+            raise ValueError("Cannot access another estate's data")
+
+    # ── 2. Load all assignments for this estate ────────────────────────────
+    assignments = (
+        FeeAssignment.objects
+        .filter(fee__estate=estate)
+        .select_related(
+            'fee',
+            'unit',
+            'unit__owner',
+        )
+        .order_by('unit__identifier', 'fee__name')
+    )
+
+    # ── 3. Load all payments keyed by assignment ───────────────────────────
+    # One payment per assignment is the normal case; fetch them all up front.
+    payments_by_assignment = {}
+    payments_qs = (
+        Payment.objects
+        .filter(fee_assignment__fee__estate=estate)
+        .select_related('fee_assignment', 'recorded_by')  # adjust if field differs
+    )
+    for p in payments_qs:
+        # If multiple payments exist per assignment (partial), keep the latest.
+        aid = p.fee_assignment_id
+        if aid not in payments_by_assignment:
+            payments_by_assignment[aid] = p
+        else:
+            existing = payments_by_assignment[aid]
+            # Keep most recent
+            if getattr(p, 'created_at', None) and getattr(existing, 'created_at', None):
+                if p.created_at > existing.created_at:
+                    payments_by_assignment[aid] = p
+
+    # ── 4. Build rows ──────────────────────────────────────────────────────
+    today = date_type.today()
+    rows = []
+    total_expected = Decimal('0.00')
+    total_collected = Decimal('0.00')
+    paid_count = 0
+    unpaid_count = 0
+    unit_ids = set()
+    fee_ids = set()
+
+    for assignment in assignments:
+        fee  = assignment.fee
+        unit = assignment.unit
+        owner = unit.owner
+
+        unit_ids.add(str(unit.id))
+        fee_ids.add(str(fee.id))
+
+        # Determine status
+        status = assignment.status  # 'paid', 'unpaid', 'partial', 'waived', etc.
+        # Normalise to our four values
+        if status not in ('paid', 'partial', 'waived'):
+            status = 'unpaid'
+
+        # Days overdue
+        days_overdue = 0
+        if fee.due_date and today > fee.due_date and status != 'paid':
+            days_overdue = (today - fee.due_date).days
+
+        # Payment transaction
+        payment = payments_by_assignment.get(assignment.id)
+        payment_id = str(payment.id) if payment else None
+        amount_paid = str(payment.amount) if payment else None
+
+        # Timestamp — adapt field name to your Payment model
+        payment_date = None
+        if payment:
+            ts = getattr(payment, 'created_at', None) or getattr(payment, 'payment_date', None)
+            payment_date = ts.isoformat() if ts else None
+
+        payment_method = getattr(payment, 'payment_method', None) if payment else None
+        reference = (
+            getattr(payment, 'reference_number', None) or
+            getattr(payment, 'transaction_ref', None)
+        ) if payment else None
+        recorded_by_user = getattr(payment, 'recorded_by', None) if payment else None
+        recorded_by = recorded_by_user.get_full_name() if recorded_by_user else None
+        notes = getattr(payment, 'notes', None) if payment else None
+
+        total_expected += fee.amount
+        if status == 'paid':
+            paid_count += 1
+            total_collected += Decimal(amount_paid) if amount_paid else fee.amount
+        else:
+            unpaid_count += 1
+
+        rows.append({
+            # Unit
+            'unit_id':         str(unit.id),
+            'unit_name':       unit.identifier,
+            'owner_id':        str(owner.id) if owner else None,
+            'owner_name':      owner.get_full_name() if owner else None,
+            'owner_email':     owner.email if owner else None,
+            # Fee
+            'fee_id':          str(fee.id),
+            'fee_name':        fee.name,
+            'fee_type':        getattr(fee, 'fee_type', 'standard'),
+            'fee_amount':      str(fee.amount),
+            'due_date':        fee.due_date.isoformat() if fee.due_date else None,
+            # Assignment
+            'status':          status,
+            'days_overdue':    days_overdue,
+            # Payment transaction
+            'payment_id':      payment_id,
+            'amount_paid':     amount_paid,
+            'payment_date':    payment_date,
+            'payment_method':  payment_method,
+            'reference_number':       reference,
+            'recorded_by':     recorded_by,
+            'notes':           notes,
+        })
+
+    total_pending = total_expected - total_collected
+    overall_rate = Decimal('0.00')
+    if total_expected > 0:
+        overall_rate = (total_collected / total_expected * 100).quantize(Decimal('0.01'))
+
+    logger.info(
+        f"Estate audit: {len(rows)} assignments, {paid_count} paid, "
+        f"{unpaid_count} unpaid, rate={overall_rate}%"
+    )
+
+    return {
+        'estate_id':             str(estate.id),
+        'estate_name':           estate.name,
+        'generated_at':          date_type.today().isoformat(),
+        'total_units':           len(unit_ids),
+        'total_fees':            len(fee_ids),
+        'total_assignments':     len(rows),
+        'paid_count':            paid_count,
+        'unpaid_count':          unpaid_count,
+        'total_expected':        str(total_expected),
+        'total_collected':       str(total_collected),
+        'total_pending':         str(total_pending),
+        'overall_payment_rate':  str(overall_rate),
+        'rows':                  rows,
+    }
+

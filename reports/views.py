@@ -157,3 +157,34 @@ class ReportsViewSet(viewsets.ViewSet):
                 {'error': 'An error occurred while generating the report'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+# ── Add to reports/views.py inside ReportsViewSet ─────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='estate/(?P<estate_id>[^/.]+)/audit')
+    def estate_audit_report(self, request, estate_id=None):
+        """
+        Full estate-wide audit: every unit × every fee, with complete
+        payment transaction detail (who paid, when, method, reference).
+        Used to drive the detailed Excel and PDF audit exports.
+        """
+        import uuid as _uuid
+        try:
+            _uuid.UUID(estate_id)
+        except (ValueError, AttributeError):
+            return Response({'error': 'Invalid estate ID format'}, status=404)
+
+        try:
+            data = services.get_estate_audit_report(
+                user=request.user,
+                estate_id=estate_id,
+            )
+            return Response(data, status=200)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+        except Exception as e:
+            logger.error(f"Error in estate_audit_report: {e}")
+            return Response(
+                {'error': 'An error occurred generating the audit report'},
+                status=500,
+            )
