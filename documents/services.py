@@ -389,19 +389,18 @@ def get_payment_receipt(
     Returns:
         Document instance or None if not found
     """
-    logger.debug(f"Getting payment receipt for payment: {payment_id}")
-    
     queryset = Document.objects.filter(
         document_type=DocumentType.PAYMENT_RECEIPT,
         related_payment_id=payment_id,
         is_deleted=False,
     )
-    
-    if user:
-        queryset = queryset.filter(related_user=user)
-    
-    return queryset.select_related('related_user').first()
 
+    # Always filter by user — never skip it regardless of None
+    if user is None:
+        return None
+
+    queryset = queryset.filter(related_user=user)
+    return queryset.select_related('related_user').first()
 
 def get_announcement_document(
     *,

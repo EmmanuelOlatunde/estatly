@@ -15,23 +15,18 @@ class DocumentSerializer(serializers.ModelSerializer):
     
     Includes computed fields and detailed information.
     """
-    
     document_type_display = serializers.CharField(
-        source='get_document_type_display',
-        read_only=True
+        source='get_document_type_display', read_only=True
     )
     status_display = serializers.CharField(
-        source='get_status_display',
-        read_only=True
+        source='get_status_display', read_only=True
     )
     file_url = serializers.SerializerMethodField()
     download_count = serializers.SerializerMethodField()
     related_user_email = serializers.EmailField(
-        source='related_user.email',
-        read_only=True,
-        allow_null=True
+        source='related_user.email', read_only=True, allow_null=True
     )
-    
+
     class Meta:
         model = Document
         fields = [
@@ -39,7 +34,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'document_type',
             'document_type_display',
             'title',
-            'file',
+            # 'file' removed — exposes raw storage path
             'file_url',
             'status',
             'status_display',
@@ -55,25 +50,17 @@ class DocumentSerializer(serializers.ModelSerializer):
             'generated_at',
             'download_count',
         ]
-        read_only_fields = [
-            'id',
-            'file_size',
-            'created_at',
-            'updated_at',
-            'generated_at',
-        ]
-    
+        read_only_fields = ['id', 'file_size', 'created_at', 'updated_at', 'generated_at']
+
     def get_file_url(self, obj):
-        """Get absolute URL for the file."""
         if obj.file:
             request = self.context.get('request')
             if request:
                 return request.build_absolute_uri(obj.file.url)
             return obj.file.url
         return None
-    
+
     def get_download_count(self, obj):
-        """Get number of times document has been downloaded."""
         return obj.downloads.count()
 
 

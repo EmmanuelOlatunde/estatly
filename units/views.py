@@ -469,15 +469,28 @@ class UnitViewSet(viewsets.ModelViewSet):
         
         # Get update fields
         update_fields = {}
+
         if 'is_active' in request.data:
-            update_fields['is_active'] = request.data['is_active']
+            val = request.data['is_active']
+            if not isinstance(val, bool):
+                return Response(
+                    {'error': 'is_active must be a boolean'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            update_fields['is_active'] = val
+
         if 'is_occupied' in request.data:
-            update_fields['is_occupied'] = request.data['is_occupied']
-            # If marking as unoccupied, clear occupant info
-            if not update_fields['is_occupied']:
+            val = request.data['is_occupied']
+            if not isinstance(val, bool):
+                return Response(
+                    {'error': 'is_occupied must be a boolean'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            update_fields['is_occupied'] = val
+            if not val:
                 update_fields['occupant_name'] = None
                 update_fields['occupant_phone'] = None
-        
+
         if not update_fields:
             return Response(
                 {'error': 'At least one of is_active or is_occupied must be provided'},

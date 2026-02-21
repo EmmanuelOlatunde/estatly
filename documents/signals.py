@@ -58,22 +58,18 @@ def delete_old_file_on_update(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Document)
 def auto_generate_pdf_on_create(sender, instance, created, **kwargs):
-    """Generate PDF synchronously when document is created."""
-    if created and instance.status == DocumentStatus.PENDING:
-        logger.info(f"Generating PDF for document {instance.id}")
-        try:
-            # Generate PDF
-            pdf_content = generate_document_pdf_content(instance)
-            
-            # Save PDF
-            services.generate_document_pdf(
-                document=instance,
-                pdf_content=pdf_content,
-            )
-            logger.info(f"PDF generated for document {instance.id}")
-        except Exception as e:
-            logger.error(f"PDF generation failed: {e}")
-            services.mark_document_generation_failed(
-                document=instance,
-                error_message=str(e)
-            )
+    """Only generate on initial creation, never on subsequent saves."""
+    if not created or instance.status != DocumentStatus.PENDING:
+        return
+
+    logger.info(f"Generating PDF for document {instance.id}")
+    try:
+        pdf_content = generate_document_pdf_content(instance)
+        services.generate_document_pdf(document=instance, pdf_content=pdf_content)
+        logger.info(f"PDF generated for document {instance.id}")
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}")
+        services.mark_document_generation_failed(
+            document=instance,
+            error_message=str(e)
+        )

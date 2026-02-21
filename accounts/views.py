@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from . import services
-from .permissions import IsSuperAdminOrSelf
+from .permissions import IsSuperAdminOrSelf, IsSuperAdmin
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
@@ -216,7 +216,7 @@ class UserViewSet(viewsets.ModelViewSet):
         )
 
     @deactivate_user_schema
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsSuperAdmin])
     def deactivate(self, request, pk=None):
         """
         Deactivate a user account.
@@ -241,7 +241,7 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
     @activate_user_schema
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsSuperAdmin])
     def activate(self, request, pk=None):
         """
         Activate a user account.
@@ -345,37 +345,21 @@ class PasswordResetRequestView(APIView):
 
     @password_reset_request_schema
     def post(self, request):
-        """
-        Generate password reset token for user.
-
-        Args:
-            request: HTTP request with email
-
-        Returns:
-            Success message and token (in production, send via email)
-        """
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # Always respond generically — don't confirm if email exists
         try:
-            reset_token = services.generate_password_reset_token(
+            services.generate_password_reset_token(
                 email=serializer.validated_data['email']
             )
+        except ValueError:
+            pass  # Swallow "user not found" silently
 
-            return Response(
-                {
-                    'detail': 'Password reset token generated successfully',
-                    'token': reset_token.token,
-                },
-                status=status.HTTP_200_OK
-            )
-
-        except ValueError as e:
-            return Response(
-                {'detail': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+        return Response(
+            {'detail': 'If that email is registered, a reset link has been sent.'},
+            status=status.HTTP_200_OK
+        )
 
 class PasswordResetConfirmView(APIView):
     """

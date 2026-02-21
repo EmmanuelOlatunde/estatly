@@ -17,18 +17,19 @@ class UnitSerializer(serializers.ModelSerializer):
     
     Includes computed fields and owner information.
     """
-
     owner_email = serializers.EmailField(source='owner.email', read_only=True)
     has_occupant_info = serializers.BooleanField(read_only=True)
     unit_type_display = serializers.CharField(
-        source='get_unit_type_display',
-        read_only=True
+        source='get_unit_type_display', read_only=True
     )
-    
+    estate_name = serializers.CharField(source='estate.name', read_only=True)
+
     class Meta:
         model = Unit
         fields = [
             'id',
+            'estate',
+            'estate_name',
             'identifier',
             'unit_type',
             'unit_type_display',
@@ -44,8 +45,6 @@ class UnitSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-
-
 
 class UnitListSerializer(serializers.ModelSerializer):
     """

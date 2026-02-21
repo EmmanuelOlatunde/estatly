@@ -168,9 +168,8 @@ class ReportsViewSet(viewsets.ViewSet):
         payment transaction detail (who paid, when, method, reference).
         Used to drive the detailed Excel and PDF audit exports.
         """
-        import uuid as _uuid
         try:
-            _uuid.UUID(estate_id)
+            uuid.UUID(estate_id)
         except (ValueError, AttributeError):
             return Response({'error': 'Invalid estate ID format'}, status=404)
 

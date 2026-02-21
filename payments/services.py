@@ -67,7 +67,7 @@ def create_fee(
     with transaction.atomic():
         estate = Estate.objects.get(id=estate_id)
         
-        fee = Fee.objects.create(
+        fee = Fee(
             name=name,
             description=description,
             amount=amount,

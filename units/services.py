@@ -38,24 +38,14 @@ def _assert_owner(unit: Unit, user: "AbstractBaseUser", action: str) -> None:
 
 def _validate_identifier(
     *,
-    owner: "AbstractBaseUser",
+    estate,
     identifier: Optional[str],
     exclude_unit_id: Optional[int] = None
 ) -> str:
     """
-    Validate unit identifier uniqueness and format.
-    
-    Args:
-        owner: The owner to check uniqueness for
-        identifier: The identifier to validate
-        exclude_unit_id: Optional unit ID to exclude from uniqueness check
-        
-    Returns:
-        The cleaned identifier
-        
-    Raises:
-        ValueError: If identifier is invalid or not unique
+    Validate unit identifier uniqueness and format within an estate.
     """
+
     if identifier is None:
         raise ValueError('Unit identifier is required.')
 
@@ -63,17 +53,20 @@ def _validate_identifier(
     if not identifier:
         raise ValueError('Unit identifier cannot be empty.')
 
-    queryset = Unit.objects.filter(owner=owner, identifier=identifier)
+    queryset = Unit.objects.filter(
+        estate=estate,
+        identifier__iexact=identifier
+    )
+
     if exclude_unit_id:
         queryset = queryset.exclude(id=exclude_unit_id)
 
     if queryset.exists():
         raise ValueError(
-            f'Unit with identifier "{identifier}" already exists for this owner.'
+            f'Unit with identifier "{identifier}" already exists in this estate.'
         )
 
     return identifier
-
 
 def _validate_unit_type(unit_type: str) -> None:
     """
@@ -171,7 +164,7 @@ def create_unit(
         raise ValueError('Estate is required.')
     
     _validate_estate_ownership(estate, owner)
-    identifier = _validate_identifier(owner=owner, identifier=identifier)
+    identifier = _validate_identifier(estate=estate, identifier=identifier)
     _validate_unit_type(unit_type)
     _validate_occupancy(
         is_occupied=is_occupied,
@@ -222,7 +215,7 @@ def update_unit(
     # Identifier
     if 'identifier' in update_data:
         update_data['identifier'] = _validate_identifier(
-            owner=user,
+            estate=unit.estate,
             identifier=update_data.get('identifier'),
             exclude_unit_id=unit.id,
         )
@@ -323,9 +316,7 @@ def activate_unit(
         PermissionError: If user is not the owner
     """
     _assert_owner(unit, user, 'activate')
-
     unit.is_active = True
-    unit.updated_at = timezone.now()
     unit.save(update_fields=['is_active', 'updated_at'])
     return unit
 

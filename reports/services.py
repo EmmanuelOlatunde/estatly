@@ -9,11 +9,12 @@ import logging
 from decimal import Decimal
 from typing import Dict, Optional, Any
 
-from django.db.models import Sum
+from django.db.models import Count, Sum, Q
 from django.contrib.auth import get_user_model
 from datetime import date
 from payments.models import Fee, FeeAssignment, Payment
 from estates.models import Estate
+from django.utils import timezone
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ def get_fee_payment_status(
     return {
         'fee_id': str(fee.id),
         'fee_name': fee.name,
-        'fee_type': fee.fee_type if hasattr(fee, 'fee_type') else 'standard',
+        'fee_type': 'standard',
         'total_expected': str(total_expected),
         'total_collected': str(total_collected),
         'total_pending': str(total_pending),
@@ -156,16 +157,15 @@ def get_overall_payment_summary(
     For SUPER_ADMIN: queries all estates, or filters by estate_id if provided.
     For ESTATE_MANAGER: always scoped to their own estate. The estate_id query
     param is ignored — context is derived from the authenticated user only.
-    This prevents a manager from requesting another estate's data via URL params.
     """
+    from django.db.models import Count, Sum, Q
+
     logger.info(
         f"Generating overall payment summary for user {user.id}, "
         f"estate_id={estate_id}"
     )
 
-    # ------------------------------------------------------------------
     # Determine estate scope
-    # ------------------------------------------------------------------
     if user.role == User.Role.SUPER_ADMIN:
         if estate_id:
             estates = Estate.objects.filter(id=estate_id)
@@ -174,14 +174,27 @@ def get_overall_payment_summary(
         else:
             estates = Estate.objects.all()
     else:
-        # ESTATE_MANAGER — scope is always derived from user, never from params
+        # ESTATE_MANAGER — scope always derived from user, never from params
         estate = _get_user_estate(user)
         estates = Estate.objects.filter(id=estate.id)
 
-    # ------------------------------------------------------------------
-    # Aggregate across fees
-    # ------------------------------------------------------------------
-    fees = Fee.objects.filter(estate__in=estates)
+    # Single annotated query — no N+1
+    fees = (
+        Fee.objects
+        .filter(estate__in=estates)
+        .annotate(
+            total_assignments=Count('fee_assignments'),
+            paid_count=Count(
+                'fee_assignments',
+                filter=Q(fee_assignments__status='paid')
+            ),
+            collected=Sum(
+                'fee_assignments__payment__amount',
+                filter=Q(fee_assignments__status='paid')
+            ),
+        )
+    )
+
     total_fees = fees.count()
 
     if total_fees == 0:
@@ -200,51 +213,37 @@ def get_overall_payment_summary(
     total_collected_all = Decimal('0.00')
 
     for fee in fees:
-        total_assignments = FeeAssignment.objects.filter(fee=fee).count()
-        expected = fee.amount * total_assignments
-
-        collected = (
-            Payment.objects.filter(
-                fee_assignment__fee=fee,
-                fee_assignment__status=FeeAssignment.PaymentStatus.PAID
-            ).aggregate(total=Sum('amount'))['total']
-            or Decimal('0.00')
-        )
-
-        paid_count = FeeAssignment.objects.filter(
-            fee=fee,
-            status=FeeAssignment.PaymentStatus.PAID
-        ).count()
-
+        total = fee.total_assignments
+        collected = fee.collected or Decimal('0.00')
+        paid = fee.paid_count
+        expected = fee.amount * total
         pending = expected - collected
-
-        rate = Decimal('0.00')
-        if expected > 0:
-            rate = (collected / expected * 100).quantize(Decimal('0.01'))
+        rate = (
+            (collected / expected * 100).quantize(Decimal('0.01'))
+            if expected > 0 else Decimal('0.00')
+        )
 
         fees_summary.append({
             'fee_id': str(fee.id),
             'fee_name': fee.name,
-            'fee_type': fee.fee_type if hasattr(fee, 'fee_type') else 'standard',
+            'fee_type': 'standard',
             'total_expected': str(expected),
             'total_collected': str(collected),
             'total_pending': str(pending),
             'payment_rate': str(rate),
-            'total_units': total_assignments,
-            'paid_units': paid_count,
-            'unpaid_units_count': total_assignments - paid_count,
+            'total_units': total,
+            'paid_units': paid,
+            'unpaid_units_count': total - paid,
         })
 
         total_expected_all += expected
         total_collected_all += collected
 
     total_pending_all = total_expected_all - total_collected_all
-
-    overall_rate = Decimal('0.00')
-    if total_expected_all > 0:
-        overall_rate = (
-            total_collected_all / total_expected_all * 100
-        ).quantize(Decimal('0.01'))
+    overall_rate = (
+        (total_collected_all / total_expected_all * 100).quantize(Decimal('0.01'))
+        if total_expected_all > 0 else Decimal('0.00')
+    )
 
     logger.info(
         f"Overall summary: {total_fees} fees, "
@@ -259,6 +258,7 @@ def get_overall_payment_summary(
         'overall_payment_rate': str(overall_rate),
         'fees_summary': fees_summary,
     }
+
 
 
 def get_estate_payment_summary(
@@ -429,7 +429,7 @@ def get_estate_audit_report(*, user, estate_id: str) -> dict:
             # Fee
             'fee_id':          str(fee.id),
             'fee_name':        fee.name,
-            'fee_type':        getattr(fee, 'fee_type', 'standard'),
+            'fee_type':        'standard',
             'fee_amount':      str(fee.amount),
             'due_date':        fee.due_date.isoformat() if fee.due_date else None,
             # Assignment
@@ -458,7 +458,7 @@ def get_estate_audit_report(*, user, estate_id: str) -> dict:
     return {
         'estate_id':             str(estate.id),
         'estate_name':           estate.name,
-        'generated_at':          date_type.today().isoformat(),
+        'generated_at':          timezone.now().isoformat(),
         'total_units':           len(unit_ids),
         'total_fees':            len(fee_ids),
         'total_assignments':     len(rows),

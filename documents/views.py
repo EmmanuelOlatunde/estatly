@@ -344,10 +344,15 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return Response(stats)
     
     def get_client_ip(self, request):
-        """Extract client IP address from request."""
+        """
+        Extract client IP from request.
+
+        Takes the rightmost IP in X-Forwarded-For, which is set by
+        your trusted proxy — not by the client. Falls back to REMOTE_ADDR.
+        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
+            ip = x_forwarded_for.split(',')[-1].strip()
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip

@@ -19,7 +19,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     Returns user information including computed full name.
     """
-    tokens = serializers.SerializerMethodField()
+    # tokens = serializers.SerializerMethodField()
 
     full_name = serializers.SerializerMethodField()
 
@@ -37,7 +37,7 @@ class UserSerializer(serializers.ModelSerializer):
             'last_login',
             'created_at',
             'updated_at',
-            'tokens', 
+            # 'tokens', 
         ]
         read_only_fields = [
             'id',
@@ -46,12 +46,12 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-    def get_tokens(self, obj):
-        refresh = RefreshToken.for_user(obj)
-        return {
-            'refresh': str(refresh),
-            'access': str(refresh.access_token),
-        }
+    # def get_tokens(self, obj):
+    #     refresh = RefreshToken.for_user(obj)
+    #     return {
+    #         'refresh': str(refresh),
+    #         'access': str(refresh.access_token),
+    #     }
     def get_full_name(self, obj):
         """Return user's full name."""
         return obj.get_full_name()
@@ -172,10 +172,10 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         """Validate email exists in system."""
-        if not User.objects.filter(email__iexact=value, is_active=True).exists():
-            raise serializers.ValidationError(
-                'No active user found with this email address.'
-            )
+        # if not User.objects.filter(email__iexact=value, is_active=True).exists():
+        #     raise serializers.ValidationError(
+        #         'No active user found with this email address.'
+        #     )
         return value.lower()
 
 

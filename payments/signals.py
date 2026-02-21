@@ -8,7 +8,7 @@ Handles automatic actions when payments and receipts are created.
 
 from django.db.models.signals import post_save, pre_delete
 from django.dispatch import receiver
-from rest_framework.exceptions import ValidationError
+from django.core.exceptions import ValidationError
 from .models import Payment, FeeAssignment
 
 
@@ -21,11 +21,11 @@ def update_fee_assignment_status(sender, instance, created, **kwargs):
     not here, to avoid double-generation.
     """
     if created:
-        # Update fee assignment status to PAID
         fee_assignment = instance.fee_assignment
         if fee_assignment.status != FeeAssignment.PaymentStatus.PAID:
-            fee_assignment.status = FeeAssignment.PaymentStatus.PAID
-            fee_assignment.save(update_fields=['status', 'updated_at'])
+            FeeAssignment.objects.filter(pk=fee_assignment.pk).update(
+                status=FeeAssignment.PaymentStatus.PAID
+            )  # avoids another post_save cascade
 
 
 @receiver(pre_delete, sender=Payment)

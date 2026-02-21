@@ -232,19 +232,14 @@ class Receipt(models.Model):
     issued_at = models.DateTimeField(auto_now_add=True)
     
     def save(self, *args, **kwargs):
-        """Auto-generate receipt number if not set."""
+        """Auto-generate receipt number using UUID suffix to avoid race conditions."""
         if not self.receipt_number:
-            # Format: RCP-YYYYMMDD-XXXXX (where X is sequential)
-            today = timezone.now().date()
-            date_str = today.strftime('%Y%m%d')
-            
-            # Count existing receipts for today
-            today_count = Receipt.objects.filter(
-                receipt_number__startswith=f'RCP-{date_str}'
-            ).count() + 1
-            
-            self.receipt_number = f'RCP-{date_str}-{today_count:05d}'
-        
+            import uuid as _uuid
+            date_str = timezone.now().strftime('%Y%m%d')
+            # UUID suffix makes collisions astronomically unlikely
+            # unique=True on the field means the DB will still catch any edge case
+            suffix = _uuid.uuid4().hex[:6].upper()
+            self.receipt_number = f'RCP-{date_str}-{suffix}'
         super().save(*args, **kwargs)
     
     def __str__(self):
