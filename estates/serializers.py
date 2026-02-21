@@ -5,7 +5,9 @@ Serializers for estate app.
 
 from rest_framework import serializers
 from .models import Estate
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 
 class EstateSerializer(serializers.ModelSerializer):
     """
@@ -52,7 +54,9 @@ class EstateCreateSerializer(serializers.ModelSerializer):
     
     Separates write operations with additional validation.
     """
-    
+    manager = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(role=User.Role.ESTATE_MANAGER)
+    )
     class Meta:
         model = Estate
         fields = [
@@ -64,6 +68,7 @@ class EstateCreateSerializer(serializers.ModelSerializer):
             'is_active',
             'description',
             'address',
+            'manager'
         ]
         extra_kwargs = {
             'name': {'required': True},

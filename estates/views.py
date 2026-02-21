@@ -75,7 +75,6 @@ class EstateViewSet(viewsets.ModelViewSet):
             **serializer.validated_data
         )
         serializer.instance = estate
-
     def perform_update(self, serializer):
         serializer.instance = self._handle_service_call(
             services.update_estate,
@@ -118,10 +117,13 @@ class EstateViewSet(viewsets.ModelViewSet):
     def deactivate(self, request, pk=None):
         return self._toggle_estate(self.get_object(), activate=False)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=["get"])
     def statistics(self, request):
+        if not request.user.is_superuser:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
         stats = services.get_estate_statistics()
-        return Response(stats, status=status.HTTP_200_OK)
+        return Response(stats)
 
     @action(detail=False, methods=['get'], url_path='by-type/(?P<estate_type>[^/.]+)')
     def by_type(self, request, estate_type=None):

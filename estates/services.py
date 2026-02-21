@@ -51,6 +51,11 @@ def create_estate(
     
     if approximate_units is not None and approximate_units < 1:
         raise ValueError("Number of units must be at least 1.")
+    if manager.role != 'estate_manager':
+        raise ValidationError("Selected user is not an estate manager.")
+
+    if Estate.objects.filter(manager=manager).exists():
+        raise ValidationError("This manager already manages an estate.")
     
     try:
         with transaction.atomic():
