@@ -89,6 +89,8 @@ class PaymentReceiptGenerator(PDFGenerator):
             leftMargin=0.75*inch,
             topMargin=0.75*inch,
             bottomMargin=0.75*inch,
+            title=self.document.title, 
+            author="Estatly",  
         )
         
         elements = []
@@ -208,6 +210,8 @@ class AnnouncementGenerator(PDFGenerator):
             leftMargin=0.75*inch,
             topMargin=0.75*inch,
             bottomMargin=0.75*inch,
+            title=self.document.title, 
+            author="Estatly",  
         )
         
         elements = []
