@@ -160,25 +160,19 @@ def mark_fee_as_paid(
     reference_number: str = "",
     notes: str = ""
 ):
-    """
-    Mark a fee assignment as paid and generate receipt.
-    
-    NOW ALSO CREATES A DOCUMENT RECORD THAT TRIGGERS PDF GENERATION.
-    """
-    # Validation (same as before)
     if fee_assignment.status == 'paid':
         raise ValidationError("This fee has already been marked as paid")
-    
+
     if hasattr(fee_assignment, 'payment'):
         raise ValidationError("A payment record already exists for this fee")
-    
+
     if amount != fee_assignment.fee.amount:
         raise ValidationError(
             f"Payment amount ({amount}) must match fee amount ({fee_assignment.fee.amount})"
         )
-    
+
+    # ✅ CORE PAYMENT — atomic. If anything here fails, nothing is saved.
     with transaction.atomic():
-        # Create payment
         payment = Payment.objects.create(
             fee_assignment=fee_assignment,
             amount=amount,
@@ -186,14 +180,12 @@ def mark_fee_as_paid(
             payment_date=payment_date or timezone.now(),
             reference_number=reference_number,
             notes=notes,
-            recorded_by=recorded_by
+            recorded_by=recorded_by,
         )
-        
-        # Update fee assignment status
+
         fee_assignment.status = 'paid'
         fee_assignment.save(update_fields=['status', 'updated_at'])
-        
-        # Create receipt (old way - still works)
+
         receipt = Receipt.objects.create(
             payment=payment,
             estate_name=fee_assignment.fee.estate.name,
@@ -201,13 +193,15 @@ def mark_fee_as_paid(
             fee_name=fee_assignment.fee.name,
             amount=payment.amount,
             payment_date=payment.payment_date.date(),
-            payment_method=payment.payment_method
+            payment_method=payment.payment_method,
         )
-        
-        # ✅ NEW: Create document record for PDF receipt
-        # This will automatically trigger PDF generation via signal
+
+    # ✅ PDF DOCUMENT — outside the transaction.
+    # If this crashes, the payment and receipt are already safely committed.
+    # The PDF just won't exist yet — the frontend polls for it anyway.
+    try:
         from documents.models import Document, DocumentType
-        
+
         Document.objects.create(
             document_type=DocumentType.PAYMENT_RECEIPT,
             title=f"Receipt - {fee_assignment.fee.name} - {fee_assignment.unit.identifier}",
@@ -221,12 +215,17 @@ def mark_fee_as_paid(
                 'amount': str(payment.amount),
                 'payment_date': payment.payment_date.strftime('%B %d, %Y'),
                 'payment_method': payment.payment_method,
-            }
+            },
         )
-        # Note: PDF generation happens automatically via post_save signal in documents/tasks.py
-    
-    return payment
+    except Exception:
+        # Log but never crash — payment is already saved.
+        import logging
+        logging.getLogger(__name__).exception(
+            "Failed to create PDF document for payment %s — payment itself is saved.",
+            payment.id,
+        )
 
+    return payment
 
 def generate_receipt_for_payment(*, payment: Payment) -> Receipt:
     """
