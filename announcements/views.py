@@ -18,7 +18,6 @@ from django.http import HttpResponse, FileResponse
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.db.models import Q
-
 from .models import Announcement
 from .serializers import (
     AnnouncementSerializer,
@@ -548,22 +547,17 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'], url_path='pdf-status')
     def pdf_status(self, request, pk=None):
-        """
-        Check the status of PDF generation for an announcement.
-        
-        Returns information about the PDF document including generation status.
-        """
         logger.info(
             f"User {request.user.id} checking PDF status for announcement {pk}"
         )
-        
+
         announcement = self.get_object()
-        
+
         from documents import services as doc_services
         document = doc_services.get_announcement_document(
             announcement_id=announcement.id
         )
-        
+
         if not document:
             return Response(
                 {
@@ -572,12 +566,38 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
+        # Check that the file record exists AND the file is physically present.
+        # document.file is truthy even after the filesystem is wiped — we must
+        # verify existence explicitly to avoid lying to the frontend.
+        file_physically_exists = False
+        if document.file:
+            try:
+                file_physically_exists = document.file.storage.exists(document.file.name)
+            except Exception:
+                file_physically_exists = False
+
+        is_ready = document.status == 'completed' and file_physically_exists
+
+        # If the DB says completed but the file is gone, self-heal the record
+        # so the frontend sees 'failed' and shows the Regenerate button.
+        if document.status == 'completed' and not file_physically_exists:
+            logger.warning(
+                f"PDF file missing for announcement {pk} (document {document.id}) "
+                f"— marking as failed for regeneration."
+            )
+            document.status = 'failed'
+            document.error_message = (
+                'PDF file was lost (likely a storage reset). '
+                'Please regenerate.'
+            )
+            document.save(update_fields=['status', 'error_message'])
+
         return Response({
             'status': document.status,
             'document_id': str(document.id),
             'file_size': document.file_size,
             'generated_at': document.generated_at,
             'error_message': document.error_message if document.error_message else None,
-            'is_ready': document.status == 'completed' and bool(document.file),
+            'is_ready': is_ready,
         })

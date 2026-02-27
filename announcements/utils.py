@@ -12,22 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 def trigger_announcement_pdf_generation(announcement):
-    """
-    Trigger PDF generation for an announcement.
-    
-    This function creates a document record and triggers asynchronous PDF generation.
-    Can be called from signals or views.
-    
-    Args:
-        announcement: Announcement instance
-    
-    Returns:
-        Document instance if successful, None otherwise
-    """
     from documents import services as doc_services
-    
+
     try:
-        # Create document record
         document = doc_services.create_document(
             document_type='announcement',
             title=f"Announcement: {announcement.title}",
@@ -41,36 +28,17 @@ def trigger_announcement_pdf_generation(announcement):
                 'is_active': announcement.is_active,
             }
         )
-        
-        logger.info(
-            f"Document created for announcement {announcement.id}: "
-            f"document_id={document.id}"
-        )
-        
-        # Trigger asynchronous PDF generation
-        try:
-            from documents.tasks import generate_document_pdf_task
-            generate_document_pdf_task.delay(str(document.id))
-            logger.info(f"PDF generation task queued for document {document.id}")
-        except ImportError:
-            # Celery not available, generate synchronously
-            logger.warning("Celery not available, generating PDF synchronously")
-            from documents.generators import generate_document_pdf_content
-            pdf_content = generate_document_pdf_content(document)
-            doc_services.generate_document_pdf(
-                document=document,
-                pdf_content=pdf_content
-            )
-            logger.info(f"PDF generated synchronously for document {document.id}")
-        
+
+        # 🚀 DO NOTHING ELSE
+        # Signal will generate the PDF automatically
+
         return document
-        
+
     except Exception as e:
         logger.error(
             f"Failed to trigger PDF generation for announcement {announcement.id}: {e}"
         )
         return None
-
 
 def get_announcement_pdf(announcement) -> Optional[Document]:
     """
