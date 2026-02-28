@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 import dj_database_url
+import cloudinary
 
 from dotenv import load_dotenv
 
@@ -54,7 +55,8 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'django_filters',  
     "corsheaders",
-
+    'cloudinary_storage',
+    'cloudinary',
 
      # Local apps
     'accounts',
@@ -73,6 +75,14 @@ AUTHENTICATION_BACKENDS = [
 ]
 AUTH_USER_MODEL = 'accounts.User'
 
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
+)
+
+# Replace local file storage with Cloudinary
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
