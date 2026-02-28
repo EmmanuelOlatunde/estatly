@@ -58,8 +58,8 @@ def delete_old_file_on_update(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Document)
 def auto_generate_pdf_on_create(sender, instance, created, **kwargs):
-    """Only generate on initial creation, never on subsequent saves."""
-    if not created or instance.status != DocumentStatus.PENDING:
+    """Generate PDF whenever document status is set to PENDING."""
+    if instance.status != DocumentStatus.PENDING:
         return
 
     logger.info(f"Generating PDF for document {instance.id}")
