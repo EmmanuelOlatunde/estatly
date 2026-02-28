@@ -16,37 +16,33 @@ class Command(BaseCommand):
         )
 
         for doc in docs.iterator():
-            self.stdout.write(f"Repairing document {doc.id} (status={doc.status})")
+            self.stdout.write(f"Repairing {doc.id} (status={doc.status})")
             try:
-                # Force clear the file reference regardless of what's stored
-                if doc.file:
-                    try:
-                        doc.file.delete(save=False)
-                    except Exception:
-                        pass
-                    doc.file = None
+                # Use raw SQL update to clear file field — bypasses signals and service guards
+                Document.objects.filter(pk=doc.pk).update(
+                    file='',
+                    status=DocumentStatus.PENDING,
+                    error_message='',
+                    file_size=None,
+                    generated_at=None,
+                )
 
-                # Reset to clean state directly — bypass service layer guard
-                doc.status = DocumentStatus.PENDING
-                doc.error_message = ''
-                doc.file_size = None
-                doc.generated_at = None
-                doc.save(update_fields=['file', 'status', 'error_message', 'file_size', 'generated_at', 'updated_at'])
+                # Refresh from DB so doc now has clean state
+                doc.refresh_from_db()
 
-                # Generate directly
+                # Generate PDF directly
                 pdf_content = generate_document_pdf_content(doc)
                 services.generate_document_pdf(document=doc, pdf_content=pdf_content)
+
                 self.stdout.write(self.style.SUCCESS(f"  ✓ Done: {doc.id}"))
                 count += 1
 
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"  ✗ Failed: {doc.id} - {e}"))
-                try:
-                    services.mark_document_generation_failed(
-                        document=doc, error_message=str(e)
-                    )
-                except Exception:
-                    pass
+                Document.objects.filter(pk=doc.pk).update(
+                    status=DocumentStatus.FAILED,
+                    error_message=str(e)[:500],
+                )
                 failed += 1
 
         self.stdout.write(self.style.SUCCESS(f"\nRepaired: {count}, Failed: {failed}"))
