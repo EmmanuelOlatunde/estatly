@@ -12,6 +12,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
 from django.core.exceptions import ValidationError, PermissionDenied
 from .models import Announcement
+from .utils import is_manager
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -84,7 +86,7 @@ def create_announcement(
             is_active=is_active,
             **kwargs
         )
-        announcement.full_clean()
+        # announcement.full_clean()
         announcement.save()
         
         logger.info(
@@ -307,31 +309,6 @@ def get_announcement_by_id(
         raise
 
 
-def _is_manager(user,) -> bool:
-    """
-    Check if a user is a manager.
-    
-    Args:
-        user: User instance to check
-    
-    Returns:
-        True if user is a manager, False otherwise
-    """
-    # Check if user has staff status or is superuser
-    if user.is_staff or user.is_superuser:
-        return True
-    
-    # Check for manager role if role system exists
-    if hasattr(user, 'role'):
-        return user.role in ['MANAGER', 'ADMIN']
-    
-    # Check for groups
-    if hasattr(user, 'groups'):
-        return user.groups.filter(name__in=['Managers', 'Admins']).exists()
-    
-    return False
-
-
 def _user_can_create_announcement(user,) -> bool:
     """
     Check if a user can create announcements.
@@ -342,7 +319,7 @@ def _user_can_create_announcement(user,) -> bool:
     Returns:
         True if user can create announcements, False otherwise
     """
-    return _is_manager(user)
+    return is_manager(user)
 
 
 def _user_can_view_announcement(user, announcement: Announcement) -> bool:

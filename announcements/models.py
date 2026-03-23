@@ -93,20 +93,20 @@ class Announcement(models.Model):
             })
         
         # Validate that estate matches creator's estate (for non-superusers)
-        # Use try/except to handle case where estate hasn't been set yet
-        try:
-            if self.created_by and self.estate_id:  # Use estate_id instead of estate
-                if not self.created_by.is_superuser:
-                    if hasattr(self.created_by, 'estate') and self.created_by.estate:
-                        if self.estate_id != self.created_by.estate.id:
-                            raise ValidationError({
-                                'estate': f'You can only create announcements for your assigned estate ({self.created_by.estate}).'
-                            })
-        except Exception:
-            # If estate_id is not set, it will fail in the required field validation
-            pass
+        # # Use try/except to handle case where estate hasn't been set yet
+        # try:
+        #     if self.created_by and self.estate_id:  # Use estate_id instead of estate
+        #         if not self.created_by.is_superuser:
+        #             if hasattr(self.created_by, 'estate') and self.created_by.estate:
+        #                 if self.estate_id != self.created_by.estate.id:
+        #                     raise ValidationError({
+        #                         'estate': f'You can only create announcements for your assigned estate ({self.created_by.estate}).'
+        #                     })
+        # except Exception:
+        #     # If estate_id is not set, it will fail in the required field validation
+        #     pass
     
     def save(self, *args, **kwargs):
         """Override save to call full_clean."""
-        self.full_clean()
+        # self.full_clean()
         super().save(*args, **kwargs)

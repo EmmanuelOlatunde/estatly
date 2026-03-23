@@ -127,3 +127,22 @@ def regenerate_announcement_pdf(announcement, force: bool = False) -> Optional[D
             f"Failed to regenerate PDF for announcement {announcement.id}: {e}"
         )
         return None
+
+
+def is_manager(user) -> bool:
+    """
+    Single source of truth for manager checks across permissions and services.
+    """
+    if user.is_staff or user.is_superuser:
+        return True
+
+    if hasattr(user, 'role'):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        if hasattr(User, 'Role'):
+            return user.role in [User.Role.SUPER_ADMIN, User.Role.ESTATE_MANAGER]
+
+    if hasattr(user, 'groups'):
+        return user.groups.filter(name__in=['Managers', 'Admins']).exists()
+
+    return False

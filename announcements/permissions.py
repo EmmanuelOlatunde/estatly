@@ -10,10 +10,9 @@ SECURITY: Only is_superuser is treated as admin, not is_staff (managers).
 import logging
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
-from typing import TYPE_CHECKING
+from .utils import is_manager
 
-if TYPE_CHECKING:
-    from django.contrib.auth.models import AbstractBaseUser
+
 User = get_user_model()
 
 logger = logging.getLogger(__name__)
@@ -50,34 +49,7 @@ class IsManagerOrReadOnly(permissions.BasePermission):
         return request.user and request.user.is_authenticated and self._is_manager(request.user)
     
     def _is_manager(self, user) -> bool:
-        """
-        Check if a user is a manager.
-        
-        Args:
-            user: User instance to check
-        
-        Returns:
-            True if user is a manager, False otherwise
-        """
-        # Superusers are always managers
-        if user.is_superuser:
-            return True
-        
-        # is_staff indicates manager role (but not cross-estate access)
-        if user.is_staff:
-            return True
-        
-        # Check for manager role using the User.Role choices
-        if hasattr(user, 'role'):
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            return user.role in [User.Role.SUPER_ADMIN, User.Role.ESTATE_MANAGER]
-        
-        # Check for groups
-        if hasattr(user, 'groups'):
-            return user.groups.filter(name__in=['Managers', 'Admins']).exists()
-        
-        return False
+        return is_manager(user)  # delegate to shared helper
 
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
@@ -170,34 +142,7 @@ class IsManager(permissions.BasePermission):
         return self._is_manager(request.user)
     
     def _is_manager(self, user) -> bool:
-        """
-        Check if a user is a manager.
-        
-        Args:
-            user: User instance to check
-        
-        Returns:
-            True if user is a manager, False otherwise
-        """
-        # Superusers are always managers
-        if user.is_superuser:
-            return True
-        
-        # is_staff indicates manager role (but not cross-estate access)
-        if user.is_staff:
-            return True
-        
-        # Check for manager role using the User.Role choices
-        if hasattr(user, 'role'):
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            return user.role in [User.Role.SUPER_ADMIN, User.Role.ESTATE_MANAGER]
-        
-        # Check for groups
-        if hasattr(user, 'groups'):
-            return user.groups.filter(name__in=['Managers', 'Admins']).exists()
-        
-        return False
+        return is_manager(user)  # delegate to shared helper
 
 
 class IsActiveUser(permissions.BasePermission):
