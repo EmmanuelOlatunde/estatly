@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/maintenance/', include('maintenance.urls')),
     path('api/announcements/', include('announcements.urls')),
     path('api/reports/', include('reports.urls')),
+    path("api/", include("expenses.urls")),
     path('api/', include('documents.urls')),
 
     # Swagger documentation URLs

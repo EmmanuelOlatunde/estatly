@@ -14,11 +14,6 @@ from django.core.exceptions import ValidationError, PermissionDenied
 from .models import Announcement
 from .utils import is_manager
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from django.contrib.auth.base_user import AbstractBaseUser
-
 User = get_user_model()
 logger = logging.getLogger(__name__)
 

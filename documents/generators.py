@@ -280,3 +280,4 @@ def generate_document_pdf_content(document: Document) -> bytes:
     
     generator = generator_class(document)
     return generator.generate()
+    
