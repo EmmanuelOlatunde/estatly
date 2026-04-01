@@ -163,11 +163,6 @@ class ReportsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='estate/(?P<estate_id>[^/.]+)/audit')
     def estate_audit_report(self, request, estate_id=None):
-        """
-        Full estate-wide audit: every unit × every fee, with complete
-        payment transaction detail (who paid, when, method, reference).
-        Used to drive the detailed Excel and PDF audit exports.
-        """
         try:
             uuid.UUID(estate_id)
         except (ValueError, AttributeError):
@@ -177,6 +172,9 @@ class ReportsViewSet(viewsets.ViewSet):
             data = services.get_estate_audit_report(
                 user=request.user,
                 estate_id=estate_id,
+                date_from=request.query_params.get('date_from'),
+                date_to=request.query_params.get('date_to'),
+                date_field=request.query_params.get('date_field', 'payment_date'),
             )
             return Response(data, status=200)
         except ValueError as e:

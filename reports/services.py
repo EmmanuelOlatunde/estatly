@@ -298,7 +298,14 @@ def get_estate_payment_summary(
 
 # ── Add to reports/services.py ───────────────────────────────────────────────
 
-def get_estate_audit_report(*, user, estate_id: str) -> dict:
+def get_estate_audit_report(
+    *,
+    user,
+    estate_id: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    date_field: str = "payment_date",
+) -> dict:    
     """
     Estate-wide full audit report.
 
@@ -342,7 +349,23 @@ def get_estate_audit_report(*, user, estate_id: str) -> dict:
         )
         .order_by('unit__identifier', 'fee__name')
     )
-
+# ── Date range filtering ───────────────────────────────────────────────
+    if date_from or date_to:
+        if date_field == "due_date":
+            if date_from:
+                assignments = assignments.filter(fee__due_date__gte=date_from)
+            if date_to:
+                assignments = assignments.filter(fee__due_date__lte=date_to)
+        else:
+            # payment_date: keep unpaid rows + paid rows in range
+            paid_filter = Q()
+            if date_from:
+                paid_filter &= Q(payment__payment_date__gte=date_from)
+            if date_to:
+                paid_filter &= Q(payment__payment_date__lte=date_to)
+            assignments = assignments.filter(
+                Q(status='unpaid') | paid_filter
+            )
     # ── 3. Load all payments keyed by assignment ───────────────────────────
     # One payment per assignment is the normal case; fetch them all up front.
     payments_by_assignment = {}
