@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'reports',
     'documents',
     'core', 
+    "expenses",
 ]
 
 AUTHENTICATION_BACKENDS = [
